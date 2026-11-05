@@ -63,6 +63,7 @@ label.f>input,label.f>select,label.f>textarea{margin-top:3px;font-size:14px}
 .kpi .l{font-size:12px;color:var(--muted)}
 .kpi.red .v{color:var(--red)}
 .kpi.green .v{color:var(--green)}
+.kpi.amber .v{color:var(--amber)}
 
 .list{display:flex;flex-direction:column}
 .li{display:flex;gap:10px;align-items:flex-start;padding:9px 4px;border-bottom:1px solid var(--line);cursor:pointer}
@@ -173,6 +174,7 @@ const ASAMALAR = [
   { k: "teklif",   ad: "Teklif verildi" },
   { k: "sozlesme", ad: "Sözleşme imzalandı" },
   { k: "uygulama", ad: "Başvuru / uygulama" },
+  { k: "beklemede", ad: "Beklemede", bekle: true },
   { k: "tamam",    ad: "Tamamlandı", kapali: true },
   { k: "kayip",    ad: "Kaybedildi", kapali: true },
 ];
@@ -206,6 +208,7 @@ const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : "xxxxxxxx-xxxx-4xx
 const asama = k => ASAMALAR.find(a => a.k === k) || ASAMALAR[0];
 const sira = k => ASAMALAR.findIndex(a => a.k === k);
 const acik = i => !asama(i.asama).kapali;
+const ilerleme = k => (k === "kayip" || k === "beklemede") ? 0 : sira(k);  // beklemede/kayıp huni ilerlemesi sayılmaz
 const uyeAd = id => (S.members.find(m => m.user_id === id) || {}).ad || "—";
 const bas = ad => (ad || "?").split(/\s+/).map(w => w.replace(/[^\p{L}\p{N}]/gu, "")).filter(Boolean).map(w => w[0]).slice(0, 2).join("").toLocaleUpperCase("tr") || "?";
 const puan = i => [i.q_plan, i.q_tarih, i.q_finans, i.q_karar].filter(Boolean).length;
@@ -215,7 +218,7 @@ const tahsilIs = id => S.tahsilatlar.filter(t => t.is_id === id).reduce((a, t) =
 const tahsilFirma = id => S.tahsilatlar.filter(t => t.firma_id === id).reduce((a, t) => a + Number(t.tutar || 0), 0);
 const sonHareket = i => { const ak = S.aktiviteler.filter(a => a.is_id === i.id).map(a => a.tarih); return [i.updated_at, i.created_at, ...ak].filter(Boolean).sort().pop(); };
 const isKaynak = i => i.kaynak || firmaOf(i).kaynak || "Belirtilmemiş";
-const asamaTag = k => `<span class="tag ${k === "kayip" ? "red" : k === "tamam" ? "green" : "blue"}">${esc(asama(k).ad)}</span>`;
+const asamaTag = k => `<span class="tag ${k === "kayip" ? "red" : k === "tamam" ? "green" : k === "beklemede" ? "amber" : "blue"}">${esc(asama(k).ad)}</span>`;
 const puanTag = i => { const p = puan(i); return `<span class="tag ${p >= 3 ? "green" : p === 2 ? "amber" : ""}">${p}/4</span>`; };
 const yas = f => { if (!f.kurulus_tarihi) return null; const k = new Date(f.kurulus_tarihi), n = new Date(); let y = n.getFullYear() - k.getFullYear(); if (n.getMonth() < k.getMonth() || (n.getMonth() === k.getMonth() && n.getDate() < k.getDate())) y--; return y; };
 const kurulusHucre = f => f.kurulus_tarihi ? `${String(f.kurulus_tarihi).slice(0, 4)} <span class="sub">(${yas(f) < 1 ? "1 yıldan az" : yas(f) + " yıl"})</span>` : "";
@@ -713,7 +716,7 @@ async function yeniKaydet(ev) {
   const btn = $("button.pri", fm); btn.disabled = true;
   try {
     const yf = await db.insert("firmalar", f);
-    const yi = await db.insert("isler", { ...i, firma_id: yf.id, kaynak: f.kaynak, en_ileri: i.asama === "kayip" ? 0 : sira(i.asama) });
+    const yi = await db.insert("isler", { ...i, firma_id: yf.id, kaynak: f.kaynak, en_ileri: ilerleme(i.asama) });
     await db.insert("aktiviteler", { firma_id: yf.id, is_id: yi.id, tur: "Aşama", yeni_asama: yi.asama, aciklama: "Kayıt oluşturuldu → " + asama(yi.asama).ad, kullanici: S.user.id });
     await yukle(); kapat(); ciz(); toast("Kaydedildi");
   } catch (e) { btn.disabled = false; hataGoster("Kaydedilemedi: " + e.message); }
@@ -829,7 +832,7 @@ async function isKaydet(ev, id, fid) {
   try {
     if (id) { await isKaydetVeri(S.isler.find(x => x.id === id), veri); kapat(); }
     else {
-      const yi = await db.insert("isler", { ...veri, firma_id: fid, en_ileri: veri.asama === "kayip" ? 0 : sira(veri.asama) });
+      const yi = await db.insert("isler", { ...veri, firma_id: fid, en_ileri: ilerleme(veri.asama) });
       await db.insert("aktiviteler", { firma_id: fid, is_id: yi.id, tur: "Aşama", yeni_asama: yi.asama, aciklama: "Yeni iş açıldı → " + asama(yi.asama).ad, kullanici: S.user.id });
       await yukle(); ciz(); firmaAc(fid);
     }
@@ -838,7 +841,7 @@ async function isKaydet(ev, id, fid) {
 }
 async function isKaydetVeri(eski, patch) {
   const yeniAsama = patch.asama || eski.asama;
-  if (yeniAsama !== eski.asama && yeniAsama !== "kayip") patch.en_ileri = Math.max(eski.en_ileri || 0, sira(yeniAsama));
+  if (yeniAsama !== eski.asama) patch.en_ileri = Math.max(eski.en_ileri || 0, ilerleme(yeniAsama));
   if (yeniAsama !== "kayip" && "asama" in patch) patch.kayip_nedeni = null;
   try {
     await db.update("isler", eski.id, patch);
@@ -943,6 +946,7 @@ function rapor() {
   const tah = tahR.reduce((s, t) => s + Number(t.tutar || 0), 0);
   const sozTutar = S.isler.filter(i => sozI.includes(i.id)).reduce((s, i) => s + Number(i.sozlesme_tutari || 0), 0);
   const mevcutYeni = yeni.filter(i => i.kaynak === MEVCUT);
+  const bekI = S.isler.filter(i => i.asama === "beklemede").map(i => i.id);
   const donemAd = { 30: "son 30 gün", 90: "son 3 ay", 180: "son 6 ay", 365: "son 12 ay" }[S.donem] || "";
   const kpi = (l, v, ids, baslik, ek = "", cls = "", tip = "is") => `<div class="card kpi tik ${cls}" onclick="raporListe('${reg(baslik + " (" + donemAd + ")", ids, tip)}')"><div class="l">${l}</div><div class="v">${v}</div>${ek}</div>`;
 
@@ -969,6 +973,7 @@ function rapor() {
     ${kpi("Sözleşme", say(sozI), sozI, "Sözleşme imzalanan işler", `<div class="l">${tl(sozTutar)}</div>`)}
     ${kpi("Tahsilat", tl(tah) || "0 ₺", tahR.map(t => t.is_id).filter(Boolean), "Tahsilat yapılan işler", "", "green")}
     ${kpi("Kaybedilen", say(kayipI), kayipI, "Kaybedilen işler", "", say(kayipI) ? "red" : "")}
+    <div class="card kpi tik ${bekI.length ? "amber" : ""}" onclick="raporListe('${reg("Beklemedeki işler (şu an)", bekI)}')"><div class="l">Beklemede (şu an)</div><div class="v">${bekI.length}</div></div>
   </div>
   <div class="grid g2">
     <div class="card"><h3>Açık huni (şu an)</h3>
