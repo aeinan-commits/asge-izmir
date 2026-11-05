@@ -125,6 +125,10 @@ td.wrap{white-space:normal;min-width:200px}
 .tli .m{color:var(--muted);font-size:12px}
 .sys{color:var(--muted);font-style:italic}
 
+.tik{cursor:pointer;border-radius:6px;transition:background .12s}
+.tik:hover{background:var(--accent-soft)}
+.card.tik:hover{border-color:var(--accent)}
+tr.tik td{cursor:pointer}
 .bar{height:8px;background:var(--bg);border-radius:4px;overflow:hidden}
 .bar>i{display:block;height:100%;background:var(--accent)}
 
@@ -357,8 +361,9 @@ function ciz() {
   </header>
   <main id="main"></main>`;
   ({ pano: pano, huni: huni, firmalar: firmaListe, ortaklar: ortakListe, rapor: rapor })[S.view]();
+  if (S.liste && $("#listeOv")) listeCiz();
 }
-function git(v) { S.view = v; ciz(); window.scrollTo(0, 0); }
+function git(v) { listeKapat(); S.view = v; ciz(); window.scrollTo(0, 0); }
 function demoSifirla() { if (confirm("Demo verileri silinip örnek veriler yeniden yüklensin mi?")) { localStorage.removeItem("asge_takip_demo_v1"); db = demoDB(); yenile(true); } }
 
 const kisiSec = () => `<select onchange="S.kisi=this.value;ciz()"><option value="">Herkes</option>${S.members.map(m => `<option value="${m.user_id}" ${S.kisi === m.user_id ? "selected" : ""}>${esc(m.ad)}</option>`).join("")}</select>`;
@@ -605,7 +610,7 @@ function firmaAc(id, onAyar = {}, hata = "") {
 }
 function yildiz(el) { el.querySelectorAll("label.req").forEach(l => { const sp = document.createElement("span"); sp.className = "rq"; sp.textContent = " *"; l.firstChild.after(sp); }); }
 function kapat() { const o = $("#firmaOv"); if (o) o.remove(); const o2 = $("#kucukOv"); if (o2) o2.remove(); }
-document.addEventListener("keydown", e => { if (e.key === "Escape") kapat(); });
+document.addEventListener("keydown", e => { if (e.key !== "Escape") return; if ($("#firmaOv") || $("#kucukOv")) kapat(); else listeKapat(); });
 
 function formOku(fm) {
   const v = n => fm[n].value.trim() || null;
@@ -732,64 +737,79 @@ async function ortakSil(id) {
 /* ---------- RAPOR ---------- */
 function rapor() {
   const bas_ = addDays(-S.donem), basIso = bas_.toISOString(), basYmd = ymd(bas_);
+  const L = {}; const reg = (baslik, ids) => { const k = "l" + Object.keys(L).length; L[k] = { baslik, ids: [...new Set(ids)] }; return k; };
+  const tik = (baslik, ids) => `class="tik" onclick="raporListe('${reg(baslik, ids)}')"`;
   const ak = S.aktiviteler.filter(a => a.tarih >= basIso);
-  const asamaya = k => new Set(ak.filter(a => a.tur === "Aşama" && a.yeni_asama === k).map(a => a.firma_id)).size;
+  const asamaIds = k => ak.filter(a => a.tur === "Aşama" && a.yeni_asama === k).map(a => a.firma_id);
   const yeni = S.firmalar.filter(f => f.created_at >= basIso);
-  const gorusme = ak.filter(a => GORUSME_TURLERI.includes(a.tur)).length;
-  const teklif = asamaya("teklif"), sozlesme = asamaya("sozlesme"), kayip = asamaya("kayip");
-  const tah = S.tahsilatlar.filter(t => t.tarih >= basYmd).reduce((s, t) => s + Number(t.tutar || 0), 0);
-  const sozTutar = S.firmalar.filter(f => ak.some(a => a.firma_id === f.id && a.tur === "Aşama" && a.yeni_asama === "sozlesme")).reduce((s, f) => s + Number(f.sozlesme_tutari || 0), 0);
+  const gorAk = ak.filter(a => GORUSME_TURLERI.includes(a.tur));
+  const teklifI = asamaIds("teklif"), sozI = asamaIds("sozlesme"), kayipI = asamaIds("kayip");
+  const say = ids => new Set(ids).size;
+  const tahR = S.tahsilatlar.filter(t => t.tarih >= basYmd);
+  const tah = tahR.reduce((s, t) => s + Number(t.tutar || 0), 0);
+  const sozTutar = S.firmalar.filter(f => sozI.includes(f.id)).reduce((s, f) => s + Number(f.sozlesme_tutari || 0), 0);
+  const donemAd = { 30: "son 30 gün", 90: "son 3 ay", 180: "son 6 ay", 365: "son 12 ay" }[S.donem] || "";
+  const kpi = (l, v, ids, baslik, ek = "", cls = "") => `<div class="card kpi tik ${cls}" onclick="raporListe('${reg(baslik + " (" + donemAd + ")", ids)}')"><div class="l">${l}</div><div class="v">${v}</div>${ek}</div>`;
 
   // kaynağa göre (dönemde oluşturulan firmalar)
   const kay = {};
-  yeni.forEach(f => { const k = f.kaynak || "Belirtilmemiş"; kay[k] = kay[k] || { n: 0, tek: 0, soz: 0 }; kay[k].n++; if (f.en_ileri >= sira("teklif")) kay[k].tek++; if (f.en_ileri >= sira("sozlesme")) kay[k].soz++; });
-  const kayR = Object.entries(kay).sort((a, b) => b[1].n - a[1].n);
+  yeni.forEach(f => { const k = f.kaynak || "Belirtilmemiş"; kay[k] = kay[k] || { n: [], tek: [], soz: [] }; kay[k].n.push(f.id); if (f.en_ileri >= sira("teklif")) kay[k].tek.push(f.id); if (f.en_ileri >= sira("sozlesme")) kay[k].soz.push(f.id); });
+  const kayR = Object.entries(kay).sort((a, b) => b[1].n.length - a[1].n.length);
   // kayıp nedenleri
   const kn = {};
-  S.firmalar.filter(f => f.asama === "kayip" && (f.updated_at || "") >= basIso).forEach(f => { const k = f.kayip_nedeni || "Belirtilmemiş"; kn[k] = (kn[k] || 0) + 1; });
-  const knR = Object.entries(kn).sort((a, b) => b[1] - a[1]); const knMax = Math.max(1, ...knR.map(x => x[1]));
+  S.firmalar.filter(f => f.asama === "kayip" && (f.updated_at || "") >= basIso).forEach(f => { const k = f.kayip_nedeni || "Belirtilmemiş"; (kn[k] = kn[k] || []).push(f.id); });
+  const knR = Object.entries(kn).sort((a, b) => b[1].length - a[1].length); const knMax = Math.max(1, ...knR.map(x => x[1].length));
   // açık huni
   const acikF = S.firmalar.filter(acik);
-  const huniR = ASAMALAR.filter(a => !a.kapali).map(a => ({ a, n: acikF.filter(f => f.asama === a.k).length, t: acikF.filter(f => f.asama === a.k).reduce((s, f) => s + Number(f.sozlesme_tutari || f.teklif_tutari || 0), 0) }));
-  const huniMax = Math.max(1, ...huniR.map(x => x.n));
-  // kişiye göre
-  const kisiR = S.members.map(m => {
-    const fs = acikF.filter(f => f.sorumlu === m.user_id);
-    return { m, acik: fs.length, gec: fs.filter(f => !f.sonraki_tarih || f.sonraki_tarih < ymd()).length,
-      akt: ak.filter(a => a.kullanici === m.user_id && a.tur !== "Aşama").length,
-      soz: new Set(ak.filter(a => a.tur === "Aşama" && a.yeni_asama === "sozlesme" && (S.firmalar.find(f => f.id === a.firma_id) || {}).sorumlu === m.user_id).map(a => a.firma_id)).size };
-  });
+  const huniR = ASAMALAR.filter(a => !a.kapali).map(a => { const fs = acikF.filter(f => f.asama === a.k); return { a, fs, t: fs.reduce((s, f) => s + Number(f.sozlesme_tutari || f.teklif_tutari || 0), 0) }; });
+  const huniMax = Math.max(1, ...huniR.map(x => x.fs.length));
   const oran = (a, b) => b ? Math.round(a / b * 100) + "%" : "—";
+  const hucre = (ids, baslik) => `<td class="num"><span ${ids.length ? tik(baslik, ids) : ""} style="display:inline-block;padding:2px 8px">${ids.length}</span></td>`;
 
   $("#main").innerHTML = `
   <div class="toolbar"><h2 style="margin:0;margin-right:auto">Rapor</h2>
     <select onchange="S.donem=+this.value;ciz()">${[[30, "Son 30 gün"], [90, "Son 3 ay"], [180, "Son 6 ay"], [365, "Son 12 ay"]].map(([v, t]) => `<option value="${v}" ${S.donem === v ? "selected" : ""}>${t}</option>`).join("")}</select></div>
+  <p style="color:var(--muted);margin:-6px 0 12px;font-size:13px">Rakamlara ve satırlara tıklayarak ilgili firmaları listeleyebilirsiniz.</p>
   <div class="grid g4" style="margin-bottom:16px">
-    <div class="card kpi"><div class="l">Yeni aday</div><div class="v">${yeni.length}</div></div>
-    <div class="card kpi"><div class="l">Görüşme (ziyaret / toplantı / sunum)</div><div class="v">${gorusme}</div></div>
-    <div class="card kpi"><div class="l">Teklif verilen firma</div><div class="v">${teklif}</div></div>
-    <div class="card kpi"><div class="l">Sözleşme</div><div class="v">${sozlesme}</div><div class="l">${tl(sozTutar)}</div></div>
-    <div class="card kpi green"><div class="l">Tahsilat</div><div class="v">${tl(tah) || "0 ₺"}</div></div>
-    <div class="card kpi ${kayip ? "red" : ""}"><div class="l">Kaybedilen</div><div class="v">${kayip}</div></div>
+    ${kpi("Yeni aday", yeni.length, yeni.map(f => f.id), "Yeni adaylar")}
+    ${kpi("Görüşme (ziyaret / toplantı / sunum)", gorAk.length, gorAk.map(a => a.firma_id), "Görüşme yapılan firmalar")}
+    ${kpi("Teklif verilen firma", say(teklifI), teklifI, "Teklif verilen firmalar")}
+    ${kpi("Sözleşme", say(sozI), sozI, "Sözleşme imzalanan firmalar", `<div class="l">${tl(sozTutar)}</div>`)}
+    ${kpi("Tahsilat", tl(tah) || "0 ₺", tahR.map(t => t.firma_id), "Tahsilat yapılan firmalar", "", "green")}
+    ${kpi("Kaybedilen", say(kayipI), kayipI, "Kaybedilen firmalar", "", say(kayipI) ? "red" : "")}
   </div>
   <div class="grid g2">
     <div class="card"><h3>Açık huni (şu an)</h3>
-      ${huniR.map(x => `<div style="margin-bottom:9px"><div class="row" style="justify-content:space-between;font-size:13px"><span>${x.a.ad}</span><span><b>${x.n}</b> <span style="color:var(--muted)">${x.t ? "· " + tl(x.t) : ""}</span></span></div><div class="bar"><i style="width:${x.n / huniMax * 100}%"></i></div></div>`).join("")}
+      ${huniR.map(x => `<div ${tik("Açık huni: " + x.a.ad, x.fs.map(f => f.id))} style="padding:4px 6px;margin:0 -6px 5px"><div class="row" style="justify-content:space-between;font-size:13px"><span>${x.a.ad}</span><span><b>${x.fs.length}</b> <span style="color:var(--muted)">${x.t ? "· " + tl(x.t) : ""}</span></span></div><div class="bar"><i style="width:${x.fs.length / huniMax * 100}%"></i></div></div>`).join("")}
     </div>
     <div class="card"><h3>Kayıp nedenleri</h3>
-      ${knR.map(([k, n]) => `<div style="margin-bottom:9px"><div class="row" style="justify-content:space-between;font-size:13px"><span>${esc(k)}</span><b>${n}</b></div><div class="bar"><i style="width:${n / knMax * 100}%;background:var(--red)"></i></div></div>`).join("") || `<div class="empty">Bu dönemde kayıp yok.</div>`}
+      ${knR.map(([k, ids]) => `<div ${tik("Kayıp nedeni: " + k, ids)} style="padding:4px 6px;margin:0 -6px 5px"><div class="row" style="justify-content:space-between;font-size:13px"><span>${esc(k)}</span><b>${ids.length}</b></div><div class="bar"><i style="width:${ids.length / knMax * 100}%;background:var(--red)"></i></div></div>`).join("") || `<div class="empty">Bu dönemde kayıp yok.</div>`}
     </div>
     <div class="card"><h3>Kaynağa göre dönüşüm (dönemde eklenen adaylar)</h3>
       <div class="tscroll"><table><thead><tr><th>Kaynak</th><th class="num">Aday</th><th class="num">Teklife ulaşan</th><th class="num">Sözleşmeye ulaşan</th><th class="num">Oran</th></tr></thead>
-      <tbody>${kayR.map(([k, x]) => `<tr style="cursor:default"><td>${esc(k)}</td><td class="num">${x.n}</td><td class="num">${x.tek}</td><td class="num">${x.soz}</td><td class="num">${oran(x.soz, x.n)}</td></tr>`).join("") || `<tr><td colspan="5" class="empty">Veri yok.</td></tr>`}</tbody></table></div>
-    </div>
-    <div class="card"><h3>Kişiye göre</h3>
-      <div class="tscroll"><table><thead><tr><th>Kişi</th><th class="num">Açık kayıt</th><th class="num">Geciken</th><th class="num">Dönem görüşme</th><th class="num">Dönem sözleşme</th></tr></thead>
-      <tbody>${kisiR.map(x => `<tr style="cursor:default"><td>${esc(x.m.ad)}</td><td class="num">${x.acik}</td><td class="num" style="${x.gec ? "color:var(--red);font-weight:600" : ""}">${x.gec}</td><td class="num">${x.akt}</td><td class="num">${x.soz}</td></tr>`).join("")}</tbody></table></div>
+      <tbody>${kayR.map(([k, x]) => `<tr ${tik("Kaynak: " + k, x.n)}><td>${esc(k)}</td>${hucre(x.n, "Kaynak: " + k)}${hucre(x.tek, "Kaynak: " + k + " · teklife ulaşan")}${hucre(x.soz, "Kaynak: " + k + " · sözleşmeye ulaşan")}<td class="num">${oran(x.soz.length, x.n.length)}</td></tr>`).join("") || `<tr><td colspan="5" class="empty">Veri yok.</td></tr>`}</tbody></table></div>
     </div>
   </div>
   <p style="color:var(--muted);font-size:12px;margin-top:14px">Teklif / sözleşme / kayıp sayıları, dönem içinde o aşamaya geçirilen firma sayısıdır. Doğru rapor için aşamaların zamanında güncellenmesi gerekir.</p>`;
+  S.rl = L;
 }
+
+/* rapordan firma listesi */
+function raporListe(k) { event && event.stopPropagation(); const l = S.rl && S.rl[k]; if (!l) return; S.liste = l; listeCiz(); }
+function listeCiz() {
+  const l = S.liste; if (!l) return;
+  const fs = l.ids.map(id => S.firmalar.find(f => f.id === id)).filter(Boolean);
+  let ov = $("#listeOv");
+  if (!ov) { ov = document.createElement("div"); ov.className = "ov"; ov.id = "listeOv"; ov.onmousedown = e => { if (e.target === ov) listeKapat(); }; document.body.appendChild(ov); }
+  ov.innerHTML = `<div class="modal" style="max-width:1200px">
+    <div class="mh"><h2>${esc(l.baslik)} <span style="color:var(--muted);font-weight:500">(${fs.length})</span></h2><button type="button" class="x" onclick="listeKapat()">×</button></div>
+    <div class="mb"><div class="tbl-wrap"><table><thead><tr>
+      <th>Firma</th><th>Sektör</th><th>Kuruluş</th><th>Aşama</th><th>Sorumlu</th><th>Sonraki adım / kayıp nedeni</th><th>Tarih</th><th>Puan</th><th class="num">Teklif</th><th class="num">Tahsil</th>
+    </tr></thead><tbody>${tabloSatirlari(fs)}</tbody></table></div>
+    <p style="color:var(--muted);font-size:12px;margin:10px 0 0">Firmaya tıklayarak kaydını açabilirsiniz. Kapatınca bu listeye dönersiniz.</p></div>
+  </div>`;
+}
+function listeKapat() { S.liste = null; const o = $("#listeOv"); if (o) o.remove(); }
 
 /* ---------- HESAP ---------- */
 function hesapAc() {
