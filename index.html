@@ -559,18 +559,18 @@ function csvIndir(ad, sutun, rows) {
 }
 const FIRMA_SUTUN = [["Firma", f => f.ad], ["Sektör", f => f.sektor], ["NACE kodu", f => f.nace_kodu], ["İl/İlçe", f => f.il_ilce], ["Kuruluş tarihi", f => fd(f.kurulus_tarihi)], ["Firma yaşı", f => yas(f)],
   ["Yetkili", f => f.yetkili], ["Telefon", f => f.telefon], ["E-posta", f => f.eposta], ["Kaynak", f => f.kaynak], ["Çözüm ortağı", f => (S.ortaklar.find(o => o.id === f.ortak_id) || {}).ad]];
-function islerExcel() {
+function islerExcel(rows = filtreliIsler(), ad = "asge-izmir-isler") {
   const F = i => firmaOf(i);
-  csvIndir("asge-izmir-isler", [...FIRMA_SUTUN.map(([n, fn]) => [n, i => fn(F(i))]),
+  csvIndir(ad, [...FIRMA_SUTUN.map(([n, fn]) => [n, i => fn(F(i))]),
     ["Program / destek", i => i.program], ["İhtiyaç", i => i.ihtiyac], ["Yatırım tarihi", i => fd(i.yatirim_tarihi)], ["Bütçe", i => i.butce], ["İş kaynağı", i => isKaynak(i)], ["Puan (4)", i => puan(i)],
     ["Aşama", i => asama(i.asama).ad], ["Sorumlu", i => uyeAd(i.sorumlu)], ["Sonraki adım", i => i.sonraki_adim], ["Adım tarihi", i => fd(i.sonraki_tarih)],
     ["Teklif", i => i.teklif_tutari], ["Sözleşme", i => i.sozlesme_tutari], ["Tahsil edilen", i => tahsilIs(i.id)], ["Kayıp nedeni", i => i.kayip_nedeni], ["İş notları", i => i.notlar], ["İş açılış", i => fd(i.created_at)]],
-    filtreliIsler());
+    rows);
 }
-function firmalarExcel() {
-  csvIndir("asge-izmir-firmalar", [...FIRMA_SUTUN, ["İş sayısı", f => firmaIsleri(f.id).length], ["Açık iş", f => firmaIsleri(f.id).filter(acik).length],
+function firmalarExcel(rows = filtreliFirmalar(), ad = "asge-izmir-firmalar") {
+  csvIndir(ad, [...FIRMA_SUTUN, ["İş sayısı", f => firmaIsleri(f.id).length], ["Açık iş", f => firmaIsleri(f.id).filter(acik).length],
     ["Toplam sözleşme", f => firmaIsleri(f.id).reduce((s, i) => s + Number(i.sozlesme_tutari || 0), 0)], ["Toplam tahsil", f => tahsilFirma(f.id)], ["Notlar", f => f.notlar], ["Kayıt tarihi", f => fd(f.created_at)]],
-    filtreliFirmalar());
+    rows);
 }
 
 /* ---------- form parçaları ---------- */
@@ -998,10 +998,17 @@ function listeCiz() {
   let ov = $("#listeOv");
   if (!ov) { ov = document.createElement("div"); ov.className = "ov"; ov.id = "listeOv"; ov.onmousedown = e => { if (e.target === ov) listeKapat(); }; document.body.appendChild(ov); }
   ov.innerHTML = `<div class="modal" style="max-width:1200px">
-    <div class="mh"><h2>${esc(l.baslik)} <span style="color:var(--muted);font-weight:500">(${list.length})</span></h2><button type="button" class="x" onclick="listeKapat()">×</button></div>
+    <div class="mh"><h2>${esc(l.baslik)} <span style="color:var(--muted);font-weight:500">(${list.length})</span></h2><div class="row"><button type="button" class="btn sm" onclick="listeExcel()" ${list.length ? "" : "disabled"}>Excel'e aktar</button><button type="button" class="x" onclick="listeKapat()">×</button></div></div>
     <div class="mb"><div class="tbl-wrap"><table><thead><tr>${firma ? FIRMA_BASLIK : IS_BASLIK}</tr></thead><tbody>${firma ? firmaTabloSatirlari(list) : isTabloSatirlari(list)}</tbody></table></div>
     <p class="aciklama" style="margin:10px 0 0;font-size:12px">Satıra tıklayarak kaydı açabilirsiniz. Kapatınca bu listeye dönersiniz.</p></div>
   </div>`;
+}
+function listeExcel() {
+  const l = S.liste; if (!l) return;
+  const firma = l.tip === "firma";
+  const list = l.ids.map(id => (firma ? S.firmalar : S.isler).find(x => x.id === id)).filter(Boolean);
+  const ad = "asge-rapor-" + l.baslik.toLocaleLowerCase("tr").replace(/[ıİ]/g, "i").replace(/ş/g, "s").replace(/ğ/g, "g").replace(/ü/g, "u").replace(/ö/g, "o").replace(/ç/g, "c").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60);
+  firma ? firmalarExcel(list, ad) : islerExcel(list, ad);
 }
 function listeKapat() { S.liste = null; const o = $("#listeOv"); if (o) o.remove(); }
 
