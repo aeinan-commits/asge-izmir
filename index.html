@@ -146,19 +146,20 @@ tr.tik td{cursor:pointer}
   main{padding:12px}
   .hbar{padding:10px 12px}
 }
+.sub{color:var(--muted);font-size:12px}
+.aciklama{color:var(--muted);margin:-6px 0 12px;font-size:13px}
+.hint{background:var(--amber-soft);color:#7a5414;padding:8px 12px;border-radius:6px;margin-bottom:10px;font-size:13px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.ozet{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;background:#fafbfc;border:1px solid var(--line);border-radius:8px;padding:10px 14px;margin-bottom:14px}
+.ozet b{font-size:16px}
 </style>
+
 </head>
 <body>
 <div id="root"></div>
 <div id="toast"></div>
-
 <script>
 /* =====================================================================
-   AYARLAR — Supabase kurulumundan sonra bu iki satırı doldurun.
-   (Supabase > Project Settings > API: "Project URL" ve
-    "anon public" ya da "publishable" anahtar)
-   Boş bırakılırsa uygulama DEMO modunda açılır (veriler sadece bu
-   tarayıcıda tutulur).
+   AYARLAR — Supabase bağlantı bilgileri
    ===================================================================== */
 const SUPABASE_URL = "https://akickdehbtxrfkzlacft.supabase.co";
 const SUPABASE_KEY = "sb_publishable_VWmNSEzMiKkPfQgmJb4zQw_aS5Jm2mj";
@@ -175,16 +176,19 @@ const ASAMALAR = [
   { k: "tamam",    ad: "Tamamlandı", kapali: true },
   { k: "kayip",    ad: "Kaybedildi", kapali: true },
 ];
-const KAYNAKLAR = ["Soğuk arama / ziyaret", "Çözüm ortağı", "Müşteri referansı", "Kişisel çevre", "Web / sosyal medya", "Etkinlik / fuar", "ASGE merkez", "Diğer"];
+const MEVCUT = "Mevcut müşteri";
+const KAYNAKLAR = ["Soğuk arama / ziyaret", "Çözüm ortağı", "Müşteri referansı", "Kişisel çevre", "Web / sosyal medya", "Etkinlik / fuar", "ASGE merkez", MEVCUT, "Diğer"];
 const ORTAK_TURLERI = ["Makine üreticisi / satıcısı", "Mali müşavir", "Finans danışmanı", "Fuar organizatörü", "İhracat hizmeti", "Sanayi gayrimenkulü", "Diğer"];
 const AKTIVITE_TURLERI = ["Arama", "Ziyaret", "Toplantı", "E-posta / WhatsApp", "Teklif sunumu", "Not"];
 const KAYIP_NEDENLERI = ["Fiyat", "Yatırım ertelendi", "Finansman bulunamadı", "Uygun destek yok", "Rakibe gitti", "Karar vericiye ulaşılamadı", "Yanıt yok", "Diğer"];
 const GORUSME_TURLERI = ["Ziyaret", "Toplantı", "Teklif sunumu"];
+const TABLOLAR = ["team_members", "firmalar", "isler", "aktiviteler", "tahsilatlar", "cozum_ortaklari"];
 
 /* ===================================================================== */
 const DEMO = !/^https:\/\//.test(SUPABASE_URL);
-const S = { user: null, members: [], firmalar: [], aktiviteler: [], tahsilatlar: [], ortaklar: [],
-            view: "pano", kisi: "", ara: "", fAsama: "", fSorumlu: "", fKaynak: "", donem: 90, kayipGoster: false };
+const S = { user: null, members: [], firmalar: [], isler: [], aktiviteler: [], tahsilatlar: [], ortaklar: [],
+            view: "pano", kisi: "", ara: "", fAsama: "", fSorumlu: "", fKaynak: "", fAra: "", fFKaynak: "",
+            donem: 90, kayipGoster: false, liste: null, rl: null };
 let db;
 
 /* ---------- yardımcılar ---------- */
@@ -196,17 +200,25 @@ const addDays = (n, d = new Date()) => { const x = new Date(d); x.setDate(x.getD
 const fd = s => { if (!s) return ""; const [y, m, d] = String(s).slice(0, 10).split("-"); return `${d}.${m}.${y}`; };
 const fdt = s => { if (!s) return ""; const d = new Date(s); return `${z(d.getDate())}.${z(d.getMonth() + 1)}.${d.getFullYear()} ${z(d.getHours())}:${z(d.getMinutes())}`; };
 const tl = n => (n == null || n === "" || isNaN(n)) ? "" : new Intl.NumberFormat("tr-TR", { maximumFractionDigits: 0 }).format(n) + " ₺";
+const tl0 = n => Number(n) ? tl(n) : "";
 const num = v => { if (v === "" || v == null) return null; const n = Number(String(v).replace(/\./g, "").replace(",", ".")); return isNaN(n) ? null : n; };
 const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, c => { const r = Math.random() * 16 | 0; return (c === "x" ? r : (r & 3 | 8)).toString(16); }));
 const asama = k => ASAMALAR.find(a => a.k === k) || ASAMALAR[0];
 const sira = k => ASAMALAR.findIndex(a => a.k === k);
-const acik = f => !asama(f.asama).kapali;
+const acik = i => !asama(i.asama).kapali;
 const uyeAd = id => (S.members.find(m => m.user_id === id) || {}).ad || "—";
 const bas = ad => (ad || "?").split(/\s+/).map(w => w.replace(/[^\p{L}\p{N}]/gu, "")).filter(Boolean).map(w => w[0]).slice(0, 2).join("").toLocaleUpperCase("tr") || "?";
-const puan = f => [f.q_plan, f.q_tarih, f.q_finans, f.q_karar].filter(Boolean).length;
-const gecikti = f => acik(f) && f.sonraki_tarih && f.sonraki_tarih < ymd();
-const toplamTahsil = id => S.tahsilatlar.filter(t => t.firma_id === id).reduce((a, t) => a + Number(t.tutar || 0), 0);
-const sonHareket = f => { const ak = S.aktiviteler.filter(a => a.firma_id === f.id).map(a => a.tarih); return [f.updated_at, f.created_at, ...ak].filter(Boolean).sort().pop(); };
+const puan = i => [i.q_plan, i.q_tarih, i.q_finans, i.q_karar].filter(Boolean).length;
+const firmaOf = i => S.firmalar.find(f => f.id === i.firma_id) || {};
+const firmaIsleri = fid => S.isler.filter(i => i.firma_id === fid).sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
+const tahsilIs = id => S.tahsilatlar.filter(t => t.is_id === id).reduce((a, t) => a + Number(t.tutar || 0), 0);
+const tahsilFirma = id => S.tahsilatlar.filter(t => t.firma_id === id).reduce((a, t) => a + Number(t.tutar || 0), 0);
+const sonHareket = i => { const ak = S.aktiviteler.filter(a => a.is_id === i.id).map(a => a.tarih); return [i.updated_at, i.created_at, ...ak].filter(Boolean).sort().pop(); };
+const isKaynak = i => i.kaynak || firmaOf(i).kaynak || "Belirtilmemiş";
+const asamaTag = k => `<span class="tag ${k === "kayip" ? "red" : k === "tamam" ? "green" : "blue"}">${esc(asama(k).ad)}</span>`;
+const puanTag = i => { const p = puan(i); return `<span class="tag ${p >= 3 ? "green" : p === 2 ? "amber" : ""}">${p}/4</span>`; };
+const yas = f => { if (!f.kurulus_tarihi) return null; const k = new Date(f.kurulus_tarihi), n = new Date(); let y = n.getFullYear() - k.getFullYear(); if (n.getMonth() < k.getMonth() || (n.getMonth() === k.getMonth() && n.getDate() < k.getDate())) y--; return y; };
+const kurulusHucre = f => f.kurulus_tarihi ? `${String(f.kurulus_tarihi).slice(0, 4)} <span class="sub">(${yas(f) < 1 ? "1 yıldan az" : yas(f) + " yıl"})</span>` : "";
 function toast(m) { const t = $("#toast"); t.textContent = m; t.classList.add("on"); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("on"), 2200); }
 
 /* ---------- veri katmanı: Supabase ---------- */
@@ -227,7 +239,7 @@ function supaDB() {
 
 /* ---------- veri katmanı: Demo (tarayıcıda) ---------- */
 function demoDB() {
-  const KEY = "asge_takip_demo_v1";
+  const KEY = "asge_takip_demo_v2";
   let d;
   try { d = JSON.parse(localStorage.getItem(KEY)); } catch (e) { d = null; }
   if (!d) d = demoVeri();
@@ -242,69 +254,79 @@ function demoDB() {
     async all(t) { return JSON.parse(JSON.stringify(d[t] || [])); },
     async insert(t, row) {
       const now = new Date().toISOString();
-      const r = { id: uuid(), created_at: now, ...(t === "firmalar" ? { updated_at: now } : {}), ...row };
+      const r = { id: uuid(), created_at: now, ...((t === "firmalar" || t === "isler") ? { updated_at: now } : {}), ...row };
       if (t === "aktiviteler" && !r.tarih) r.tarih = now;
       if (!r.kullanici && (t === "aktiviteler" || t === "tahsilatlar")) r.kullanici = me.user_id;
       d[t].push(r); save(); return r;
     },
     async update(t, id, patch, key = "id") {
       const r = d[t].find(x => x[key] === id); Object.assign(r, patch);
-      if (t === "firmalar") r.updated_at = new Date().toISOString();
+      if (t === "firmalar" || t === "isler") r.updated_at = new Date().toISOString();
       save(); return r;
     },
     async remove(t, id) {
       d[t] = d[t].filter(x => x.id !== id);
-      if (t === "firmalar") { d.aktiviteler = d.aktiviteler.filter(a => a.firma_id !== id); d.tahsilatlar = d.tahsilatlar.filter(a => a.firma_id !== id); }
+      if (t === "firmalar") { d.isler = d.isler.filter(a => a.firma_id !== id); d.aktiviteler = d.aktiviteler.filter(a => a.firma_id !== id); d.tahsilatlar = d.tahsilatlar.filter(a => a.firma_id !== id); }
+      if (t === "isler") { d.aktiviteler = d.aktiviteler.filter(a => a.is_id !== id); d.tahsilatlar = d.tahsilatlar.filter(a => a.is_id !== id); }
+      if (t === "cozum_ortaklari") d.firmalar.forEach(f => { if (f.ortak_id === id) f.ortak_id = null; });
       save();
     },
   };
 }
 function demoVeri() {
   const u = [uuid(), uuid(), uuid()];
-  const team_members = [{ user_id: u[0], ad: "Eren" }, { user_id: u[1], ad: "Ortak (İzmir)" }, { user_id: u[2], ad: "Uzman" }];
+  const team_members = [{ user_id: u[0], ad: "Eren" }, { user_id: u[1], ad: "Bora" }, { user_id: u[2], ad: "Serap" }];
   const o1 = uuid(), o2 = uuid();
   const cozum_ortaklari = [
     { id: o1, ad: "Ege CNC Makine", tur: "Makine üreticisi / satıcısı", yetkili: "Satış Müdürü", telefon: "0232 000 00 00", created_at: addDays(-60).toISOString() },
     { id: o2, ad: "Yıldız Mali Müşavirlik", tur: "Mali müşavir", yetkili: "SMMM", telefon: "0232 000 00 01", created_at: addDays(-50).toISOString() },
   ];
-  const F = (ad, asamaK, sorumlu, adim, gun, ek = {}) => ({
-    id: uuid(), ad, asama: asamaK, en_ileri: Math.max(0, sira(asamaK === "kayip" ? "gorusme" : asamaK)), sorumlu,
-    sonraki_adim: adim, sonraki_tarih: adim ? ymd(addDays(gun)) : null,
-    created_at: addDays(-(ek.yas || 30)).toISOString(), updated_at: addDays(-(ek.hareket ?? 3)).toISOString(),
-    q_plan: false, q_tarih: false, q_finans: false, q_karar: false, ...ek
-  });
-  const firmalar = [
-    F("Kemalpaşa Döküm A.Ş.", "teklif", u[1], "Teklif üzerine karar görüşmesi", -2, { sektor: "Metal döküm", il_ilce: "Kemalpaşa", kaynak: "Çözüm ortağı", ortak_id: o1, ihtiyac: "2 adet CNC tezgâh yatırımı", program: "Yatırım teşvik belgesi", butce: 8500000, teklif_tutari: 180000, q_plan: true, q_tarih: true, q_finans: true, q_karar: true, yas: 40 }),
-    F("Torbalı Plastik Ltd.", "uygunluk", u[2], "Makine listesini al, uygunluk raporu hazırla", 2, { sektor: "Plastik enjeksiyon", il_ilce: "Torbalı", kaynak: "Çözüm ortağı", ortak_id: o2, ihtiyac: "Kapasite artışı", butce: 3000000, q_plan: true, q_tarih: true, yas: 20 }),
-    F("Ege Tekstil İhracat", "gorusme", u[1], "Fuar takvimini ve bütçeyi iste", 4, { sektor: "Tekstil", il_ilce: "Bornova", kaynak: "Kişisel çevre", ihtiyac: "Yurt dışı fuar katılımı", program: "Fuar desteği", q_plan: true, yas: 12 }),
-    F("Menemen Seramik", "temas", u[1], "Genel müdürden randevu al", -6, { sektor: "Seramik", il_ilce: "Menemen", kaynak: "Soğuk arama / ziyaret", yas: 45, hareket: 35 }),
-    F("Çiğli Elektronik", "sozlesme", u[0], "Başvuru dosyası için evrak listesi gönder", 1, { sektor: "Elektronik", il_ilce: "Çiğli AOSB", kaynak: "Müşteri referansı", ihtiyac: "Ar-Ge projesi", program: "Ar-Ge destekleri", teklif_tutari: 250000, sozlesme_tutari: 240000, q_plan: true, q_tarih: true, q_finans: true, q_karar: true, yas: 70 }),
-    F("Gaziemir Gıda", "aday", u[2], "İlk arama", 0, { sektor: "Gıda", il_ilce: "Gaziemir", kaynak: "Etkinlik / fuar", yas: 3 }),
-    F("Aliağa Kimya", "kayip", u[1], null, 0, { sektor: "Kimya", kaynak: "Soğuk arama / ziyaret", kayip_nedeni: "Yatırım ertelendi", yas: 80 }),
-  ];
-  const aktiviteler = [], tahsilatlar = [];
-  firmalar.forEach(f => {
-    aktiviteler.push({ id: uuid(), firma_id: f.id, tur: "Aşama", yeni_asama: f.asama, aciklama: "Kayıt oluşturuldu → " + asama(f.asama).ad, tarih: f.created_at, kullanici: f.sorumlu });
-  });
-  aktiviteler.push({ id: uuid(), firma_id: firmalar[0].id, tur: "Ziyaret", aciklama: "Fabrika ziyareti, yatırım planı konuşuldu", tarih: addDays(-10).toISOString(), kullanici: u[1] });
-  aktiviteler.push({ id: uuid(), firma_id: firmalar[4].id, tur: "Toplantı", aciklama: "Sözleşme imzalandı", tarih: addDays(-5).toISOString(), kullanici: u[0] });
-  tahsilatlar.push({ id: uuid(), firma_id: firmalar[4].id, tarih: ymd(addDays(-4)), tutar: 60000, aciklama: "Peşinat (%25)", kullanici: u[0] });
-  return { team_members, cozum_ortaklari, firmalar, aktiviteler, tahsilatlar };
+  const firmalar = [], isler = [], aktiviteler = [], tahsilatlar = [];
+  const F = (ad, ek = {}) => { const f = { id: uuid(), ad, created_at: addDays(-(ek.yas || 30)).toISOString(), updated_at: addDays(-(ek.yas || 30)).toISOString(), ...ek }; delete f.yas; firmalar.push(f); return f; };
+  const I = (f, asamaK, sorumlu, adim, gun, ek = {}) => {
+    const i = { id: uuid(), firma_id: f.id, asama: asamaK, en_ileri: Math.max(0, sira(asamaK === "kayip" ? "gorusme" : asamaK)), sorumlu,
+      sonraki_adim: adim, sonraki_tarih: adim ? ymd(addDays(gun)) : null,
+      created_at: addDays(-(ek.yas || 30)).toISOString(), updated_at: addDays(-(ek.hareket ?? 3)).toISOString(),
+      q_plan: false, q_tarih: false, q_finans: false, q_karar: false, ...ek };
+    delete i.yas; delete i.hareket; isler.push(i);
+    aktiviteler.push({ id: uuid(), firma_id: f.id, is_id: i.id, tur: "Aşama", yeni_asama: asamaK, aciklama: "Kayıt oluşturuldu → " + asama(asamaK).ad, tarih: i.created_at, kullanici: sorumlu });
+    return i;
+  };
+  const f1 = F("Kemalpaşa Döküm A.Ş.", { sektor: "Metal döküm", nace_kodu: "24.51.01", il_ilce: "Kemalpaşa", kurulus_tarihi: "2009-03-12", kaynak: "Çözüm ortağı", ortak_id: o1, yas: 40 });
+  const i1 = I(f1, "teklif", u[1], "Teklif üzerine karar görüşmesi", -2, { program: "Yatırım teşvik belgesi", ihtiyac: "2 adet CNC tezgâh yatırımı", butce: 8500000, teklif_tutari: 180000, kaynak: "Çözüm ortağı", q_plan: true, q_tarih: true, q_finans: true, q_karar: true, yas: 40 });
+  const f2 = F("Torbalı Plastik Ltd.", { sektor: "Plastik enjeksiyon", il_ilce: "Torbalı", kaynak: "Çözüm ortağı", ortak_id: o2, yas: 20 });
+  I(f2, "uygunluk", u[2], "Makine listesini al, uygunluk raporu hazırla", 2, { program: "KOSGEB İşletme Geliştirme", ihtiyac: "Kapasite artışı", butce: 3000000, kaynak: "Çözüm ortağı", q_plan: true, q_tarih: true, yas: 20 });
+  const f3 = F("Ege Tekstil İhracat", { sektor: "Tekstil", il_ilce: "Bornova", kaynak: "Kişisel çevre", yas: 12 });
+  I(f3, "gorusme", u[1], "Fuar takvimini ve bütçeyi iste", 4, { program: "Yurt dışı fuar desteği", ihtiyac: "Yurt dışı fuar katılımı", kaynak: "Kişisel çevre", q_plan: true, yas: 12 });
+  const f4 = F("Menemen Seramik", { sektor: "Seramik", il_ilce: "Menemen", kaynak: "Soğuk arama / ziyaret", yas: 45 });
+  I(f4, "temas", u[1], "Genel müdürden randevu al", -6, { kaynak: "Soğuk arama / ziyaret", yas: 45, hareket: 35 });
+  const f5 = F("Çiğli Elektronik", { sektor: "Elektronik", nace_kodu: "26.11.01", il_ilce: "Çiğli AOSB", kurulus_tarihi: "2017-09-01", kaynak: "Müşteri referansı", yas: 200 });
+  const i5a = I(f5, "tamam", u[0], null, 0, { program: "KOSGEB Ar-Ge İnovasyon", ihtiyac: "Ar-Ge projesi", teklif_tutari: 250000, sozlesme_tutari: 240000, kaynak: "Müşteri referansı", q_plan: true, q_tarih: true, q_finans: true, q_karar: true, yas: 200, hareket: 20 });
+  const i5b = I(f5, "aday", u[0], "Yeni hat yatırımı için makine listesini iste", 1, { program: "Yatırım teşvik belgesi", ihtiyac: "Yeni SMT hattı", kaynak: MEVCUT, q_plan: true, yas: 2, hareket: 2 });
+  const f6 = F("Gaziemir Gıda", { sektor: "Gıda", il_ilce: "Gaziemir", kaynak: "Etkinlik / fuar", yas: 3 });
+  I(f6, "aday", u[2], "İlk arama", 0, { kaynak: "Etkinlik / fuar", yas: 3 });
+  const f7 = F("Aliağa Kimya", { sektor: "Kimya", kaynak: "Soğuk arama / ziyaret", yas: 80 });
+  I(f7, "kayip", u[1], null, 0, { program: "Yatırım teşvik belgesi", kaynak: "Soğuk arama / ziyaret", kayip_nedeni: "Yatırım ertelendi", yas: 80 });
+
+  aktiviteler.push({ id: uuid(), firma_id: f1.id, is_id: i1.id, tur: "Ziyaret", aciklama: "Fabrika ziyareti, yatırım planı konuşuldu", tarih: addDays(-10).toISOString(), kullanici: u[1] });
+  aktiviteler.push({ id: uuid(), firma_id: f5.id, is_id: i5a.id, tur: "Toplantı", aciklama: "Proje kapanış toplantısı", tarih: addDays(-20).toISOString(), kullanici: u[0] });
+  aktiviteler.push({ id: uuid(), firma_id: f5.id, is_id: null, tur: "Ziyaret", aciklama: "Nezaket ziyareti, yeni hat yatırımından bahsettiler", tarih: addDays(-3).toISOString(), kullanici: u[0] });
+  aktiviteler.push({ id: uuid(), firma_id: f5.id, is_id: i5b.id, tur: "Aşama", yeni_asama: "aday", aciklama: "Yeni iş açıldı", tarih: addDays(-2).toISOString(), kullanici: u[0] });
+  tahsilatlar.push({ id: uuid(), firma_id: f5.id, is_id: i5a.id, tarih: ymd(addDays(-150)), tutar: 60000, aciklama: "Peşinat (%25)", kullanici: u[0] });
+  tahsilatlar.push({ id: uuid(), firma_id: f5.id, is_id: i5a.id, tarih: ymd(addDays(-25)), tutar: 180000, aciklama: "Kalan bakiye", kullanici: u[0] });
+  return { team_members, cozum_ortaklari, firmalar, isler, aktiviteler, tahsilatlar };
 }
 
 /* ---------- yükleme ---------- */
 async function yukle() {
-  const [m, f, a, t, o] = await Promise.all(["team_members", "firmalar", "aktiviteler", "tahsilatlar", "cozum_ortaklari"].map(x => db.all(x)));
+  const [m, f, i, a, t, o] = await Promise.all(TABLOLAR.map(x => db.all(x)));
   S.members = m.sort((x, y) => x.ad.localeCompare(y.ad, "tr"));
-  S.firmalar = f; S.aktiviteler = a; S.tahsilatlar = t; S.ortaklar = o.sort((x, y) => x.ad.localeCompare(y.ad, "tr"));
+  S.firmalar = f; S.isler = i; S.aktiviteler = a; S.tahsilatlar = t; S.ortaklar = o.sort((x, y) => x.ad.localeCompare(y.ad, "tr"));
 }
 
 async function basla() {
-  try {
-    db = DEMO ? demoDB() : supaDB();
-  } catch (e) {
-    $("#root").innerHTML = `<div class="login"><h1>Bağlantı kurulamadı</h1><p>${esc(e.message)}</p></div>`; return;
-  }
+  try { db = DEMO ? demoDB() : supaDB(); }
+  catch (e) { $("#root").innerHTML = `<div class="login"><h1>Bağlantı kurulamadı</h1><p>${esc(e.message)}</p></div>`; return; }
   S.user = await db.session();
   if (!S.user) return girisEkrani();
   try { await yukle(); } catch (e) { return hataEkrani(e); }
@@ -315,9 +337,10 @@ async function basla() {
   ciz();
 }
 function hataEkrani(e) {
-  $("#root").innerHTML = `<div class="login"><h1>Veri okunamadı</h1><p>${esc(e.message || e)}</p><p>SQL kurulum dosyası çalıştırıldı mı?</p><button class="btn" onclick="cikis()">Çıkış</button></div>`;
+  const m = e.message || String(e);
+  const ipucu = /isler|is_id/.test(m) ? "Veri tabanı güncellemesi (guncelleme-isler.sql) henüz çalıştırılmamış olabilir." : "SQL kurulum dosyası çalıştırıldı mı?";
+  $("#root").innerHTML = `<div class="login"><h1>Veri okunamadı</h1><p>${esc(m)}</p><p>${ipucu}</p><button class="btn" onclick="cikis()">Çıkış</button></div>`;
 }
-
 function girisEkrani(hata) {
   $("#root").innerHTML = `
   <form class="login" onsubmit="girisYap(event)">
@@ -336,99 +359,103 @@ async function girisYap(ev) {
   catch (e) { girisEkrani(e.message === "Invalid login credentials" ? "E-posta veya şifre hatalı." : e.message); }
 }
 async function cikis() { await db.signOut(); S.user = null; girisEkrani(); }
-
 async function yenile(sessiz) {
   try { await yukle(); ciz(); if (!sessiz) toast("Güncellendi"); }
   catch (e) { toast("Yenilenemedi: " + e.message); }
 }
 
 /* ---------- ana çizim ---------- */
-const SEKMELER = [["pano", "Pano"], ["huni", "Huni"], ["firmalar", "Firmalar"], ["ortaklar", "Çözüm ortakları"], ["rapor", "Rapor"]];
+const SEKMELER = [["pano", "Pano"], ["huni", "Huni"], ["isler", "İşler"], ["firmalar", "Firmalar"], ["ortaklar", "Çözüm ortakları"], ["rapor", "Rapor"]];
 function ciz() {
   const me = S.members.find(m => m.user_id === S.user.id);
   $("#root").innerHTML = `
   <header>
-    ${DEMO ? `<div class="demo">Demo modu — örnek verilerle çalışıyor, kayıtlar yalnızca bu tarayıcıda tutulur. Supabase bilgileri girilince ortak veri tabanına bağlanır. <a href="#" onclick="demoSifirla();return false">Örnek verileri sıfırla</a></div>` : ""}
+    ${DEMO ? `<div class="demo">Demo modu — örnek verilerle çalışıyor, kayıtlar yalnızca bu tarayıcıda tutulur. <a href="#" onclick="demoSifirla();return false">Örnek verileri sıfırla</a></div>` : ""}
     <div class="hbar">
       <div class="brand">ASGE İzmir <span>· Müşteri Takip</span></div>
       <nav>${SEKMELER.map(([k, ad]) => `<button class="${S.view === k ? "on" : ""}" onclick="git('${k}')">${ad}</button>`).join("")}</nav>
       <div class="hright">
-        <button class="btn pri" onclick="firmaAc()">+ Yeni firma</button>
+        <button class="btn pri" onclick="yeniKayit()">+ Yeni firma</button>
         <button class="btn" title="Yenile" onclick="yenile()">⟳</button>
         <button class="btn" onclick="hesapAc()"><span class="av" style="width:20px;height:20px;font-size:10px;vertical-align:-5px">${esc(bas(me && me.ad))}</span> ${esc(me ? me.ad : "")}</button>
       </div>
     </div>
   </header>
   <main id="main"></main>`;
-  ({ pano: pano, huni: huni, firmalar: firmaListe, ortaklar: ortakListe, rapor: rapor })[S.view]();
+  ({ pano, huni, isler: isListe, firmalar: firmaListe, ortaklar: ortakListe, rapor })[S.view]();
   if (S.liste && $("#listeOv")) listeCiz();
 }
 function git(v) { listeKapat(); S.view = v; ciz(); window.scrollTo(0, 0); }
-function demoSifirla() { if (confirm("Demo verileri silinip örnek veriler yeniden yüklensin mi?")) { localStorage.removeItem("asge_takip_demo_v1"); db = demoDB(); yenile(true); } }
+function demoSifirla() { if (confirm("Demo verileri silinip örnek veriler yeniden yüklensin mi?")) { localStorage.removeItem("asge_takip_demo_v2"); db = demoDB(); yenile(true); } }
 
 const kisiSec = () => `<select onchange="S.kisi=this.value;ciz()"><option value="">Herkes</option>${S.members.map(m => `<option value="${m.user_id}" ${S.kisi === m.user_id ? "selected" : ""}>${esc(m.ad)}</option>`).join("")}</select>`;
-const kisiFiltre = f => !S.kisi || f.sorumlu === S.kisi;
+const kisiFiltre = i => !S.kisi || i.sorumlu === S.kisi;
 
-function firmaSatir(f, sag) {
-  return `<div class="li" onclick="firmaAc('${f.id}')">
-    <span class="av" title="${esc(uyeAd(f.sorumlu))}">${esc(bas(uyeAd(f.sorumlu)))}</span>
-    <div class="main"><div class="t">${esc(f.ad)} <span class="tag">${esc(asama(f.asama).ad)}</span></div>
-    <div class="s">${esc(f.sonraki_adim || "Sonraki adım yok")}</div></div>
+function isSatir(i, sag) {
+  const f = firmaOf(i);
+  return `<div class="li" onclick="isAc('${i.id}')">
+    <span class="av" title="${esc(uyeAd(i.sorumlu))}">${esc(bas(uyeAd(i.sorumlu)))}</span>
+    <div class="main"><div class="t">${esc(f.ad)} <span class="tag">${esc(asama(i.asama).ad)}</span></div>
+    <div class="s">${i.program ? `<b style="font-weight:600">${esc(i.program)}</b> · ` : ""}${esc(i.sonraki_adim || "Sonraki adım yok")}</div></div>
     <div>${sag || ""}</div></div>`;
 }
-function tarihTag(f) {
-  if (!f.sonraki_tarih) return `<span class="tag red">Tarih yok</span>`;
+function tarihTag(i) {
+  if (!i.sonraki_tarih) return `<span class="tag red">Tarih yok</span>`;
   const t = ymd();
-  if (f.sonraki_tarih < t) { const g = Math.round((new Date(t) - new Date(f.sonraki_tarih)) / 864e5); return `<span class="tag red">${g} gün gecikti</span>`; }
-  if (f.sonraki_tarih === t) return `<span class="tag amber">Bugün</span>`;
-  return `<span class="tag">${fd(f.sonraki_tarih)}</span>`;
+  if (i.sonraki_tarih < t) { const g = Math.round((new Date(t) - new Date(i.sonraki_tarih)) / 864e5); return `<span class="tag red">${g} gün gecikti</span>`; }
+  if (i.sonraki_tarih === t) return `<span class="tag amber">Bugün</span>`;
+  return `<span class="tag">${fd(i.sonraki_tarih)}</span>`;
 }
 
 /* ---------- PANO ---------- */
 function pano() {
-  const ac = S.firmalar.filter(f => acik(f) && kisiFiltre(f));
+  const ac = S.isler.filter(i => acik(i) && kisiFiltre(i));
   const t = ymd(), hafta = ymd(addDays(7)), ay = addDays(-30).toISOString();
-  const gecikenler = ac.filter(f => !f.sonraki_tarih || f.sonraki_tarih < t).sort((a, b) => (a.sonraki_tarih || "").localeCompare(b.sonraki_tarih || ""));
-  const buHafta = ac.filter(f => f.sonraki_tarih && f.sonraki_tarih >= t && f.sonraki_tarih <= hafta).sort((a, b) => a.sonraki_tarih.localeCompare(b.sonraki_tarih));
-  const durgun = ac.filter(f => (sonHareket(f) || "") < ay).sort((a, b) => (sonHareket(a) || "").localeCompare(sonHareket(b) || ""));
-  const tah30 = S.tahsilatlar.filter(x => x.tarih >= ymd(addDays(-30))).filter(x => { const f = S.firmalar.find(y => y.id === x.firma_id); return !S.kisi || (f && f.sorumlu === S.kisi); }).reduce((a, x) => a + Number(x.tutar || 0), 0);
-  const firmaIds = new Set(S.firmalar.filter(kisiFiltre).map(f => f.id));
+  const gecikenler = ac.filter(i => !i.sonraki_tarih || i.sonraki_tarih < t).sort((a, b) => (a.sonraki_tarih || "").localeCompare(b.sonraki_tarih || ""));
+  const buHafta = ac.filter(i => i.sonraki_tarih && i.sonraki_tarih >= t && i.sonraki_tarih <= hafta).sort((a, b) => a.sonraki_tarih.localeCompare(b.sonraki_tarih));
+  const durgun = ac.filter(i => (sonHareket(i) || "") < ay).sort((a, b) => (sonHareket(a) || "").localeCompare(sonHareket(b) || ""));
+  const tah30 = S.tahsilatlar.filter(x => x.tarih >= ymd(addDays(-30))).filter(x => { const i = S.isler.find(y => y.id === x.is_id); return !S.kisi || (i && i.sorumlu === S.kisi); }).reduce((a, x) => a + Number(x.tutar || 0), 0);
+  const firmaIds = new Set(S.kisi ? S.isler.filter(kisiFiltre).map(i => i.firma_id) : S.firmalar.map(f => f.id));
   const sonAkt = S.aktiviteler.filter(a => firmaIds.has(a.firma_id)).sort((a, b) => b.tarih.localeCompare(a.tarih)).slice(0, 12);
 
   $("#main").innerHTML = `
   <div class="toolbar"><h2 style="margin:0;margin-right:auto">Haftalık pano</h2>${kisiSec()}</div>
   <div class="grid g4" style="margin-bottom:16px">
-    <div class="card kpi"><div class="l">Açık fırsat</div><div class="v">${ac.length}</div></div>
+    <div class="card kpi"><div class="l">Açık iş</div><div class="v">${ac.length}</div></div>
     <div class="card kpi ${gecikenler.length ? "red" : ""}"><div class="l">Gecikmiş / tarihsiz adım</div><div class="v">${gecikenler.length}</div></div>
     <div class="card kpi"><div class="l">Önümüzdeki 7 gün</div><div class="v">${buHafta.length}</div></div>
     <div class="card kpi green"><div class="l">Son 30 gün tahsilat</div><div class="v">${tl(tah30) || "0 ₺"}</div></div>
   </div>
   <div class="grid g2">
-    <div class="card"><h3>Gecikenler</h3><div class="list">${gecikenler.map(f => firmaSatir(f, tarihTag(f))).join("") || `<div class="empty">Gecikmiş adım yok.</div>`}</div></div>
-    <div class="card"><h3>Bugün ve önümüzdeki 7 gün</h3><div class="list">${buHafta.map(f => firmaSatir(f, tarihTag(f))).join("") || `<div class="empty">Planlanmış adım yok.</div>`}</div></div>
-    <div class="card"><h3>30+ gündür hareketsiz</h3><div class="list">${durgun.map(f => firmaSatir(f, `<span class="tag amber">${fd(sonHareket(f))}</span>`)).join("") || `<div class="empty">Hareketsiz kayıt yok.</div>`}</div></div>
-    <div class="card"><h3>Son hareketler</h3><div class="list">${sonAkt.map(a => { const f = S.firmalar.find(x => x.id === a.firma_id) || {}; return `<div class="li" onclick="firmaAc('${a.firma_id}')"><span class="av">${esc(bas(uyeAd(a.kullanici)))}</span><div class="main"><div class="t">${esc(f.ad)} <span class="tag ${a.tur === "Aşama" ? "blue" : ""}">${esc(a.tur)}</span></div><div class="s">${esc(a.aciklama)}</div></div><div class="tag">${fd(a.tarih)}</div></div>`; }).join("") || `<div class="empty">Henüz kayıt yok.</div>`}</div></div>
+    <div class="card"><h3>Gecikenler</h3><div class="list">${gecikenler.map(i => isSatir(i, tarihTag(i))).join("") || `<div class="empty">Gecikmiş adım yok.</div>`}</div></div>
+    <div class="card"><h3>Bugün ve önümüzdeki 7 gün</h3><div class="list">${buHafta.map(i => isSatir(i, tarihTag(i))).join("") || `<div class="empty">Planlanmış adım yok.</div>`}</div></div>
+    <div class="card"><h3>30+ gündür hareketsiz</h3><div class="list">${durgun.map(i => isSatir(i, `<span class="tag amber">${fd(sonHareket(i))}</span>`)).join("") || `<div class="empty">Hareketsiz iş yok.</div>`}</div></div>
+    <div class="card"><h3>Son hareketler</h3><div class="list">${sonAkt.map(a => {
+      const f = S.firmalar.find(x => x.id === a.firma_id) || {}; const i = a.is_id ? S.isler.find(x => x.id === a.is_id) : null;
+      return `<div class="li" onclick="${i ? `isAc('${i.id}')` : `firmaAc('${a.firma_id}')`}"><span class="av">${esc(bas(uyeAd(a.kullanici)))}</span><div class="main"><div class="t">${esc(f.ad)} <span class="tag ${a.tur === "Aşama" ? "blue" : ""}">${esc(a.tur)}</span></div><div class="s">${i && i.program ? `<b style="font-weight:600">${esc(i.program)}</b> · ` : ""}${esc(a.aciklama)}</div></div><div class="tag">${fd(a.tarih)}</div></div>`;
+    }).join("") || `<div class="empty">Henüz kayıt yok.</div>`}</div></div>
   </div>`;
 }
 
-/* ---------- HUNİ (kanban) ---------- */
+/* ---------- HUNİ ---------- */
 function huni() {
   const kolonlar = ASAMALAR.filter(a => S.kayipGoster || a.k !== "kayip");
-  const fs = S.firmalar.filter(kisiFiltre);
+  const is_ = S.isler.filter(kisiFiltre);
   $("#main").innerHTML = `
   <div class="toolbar"><h2 style="margin:0;margin-right:auto">Satış hunisi</h2>
     <label class="row" style="font-size:13px;gap:6px"><input type="checkbox" style="width:auto" ${S.kayipGoster ? "checked" : ""} onchange="S.kayipGoster=this.checked;ciz()"> Kaybedilenleri göster</label>
     ${kisiSec()}</div>
-  <p style="color:var(--muted);margin:-6px 0 12px;font-size:13px">Kartları sürükleyerek aşama değiştirebilirsiniz.</p>
+  <p class="aciklama">Her kart bir iştir; aynı firmanın birden fazla işi ayrı kartlarda görünür. Kartları sürükleyerek aşama değiştirebilirsiniz.</p>
   <div class="kanban">${kolonlar.map(a => {
-    const kart = fs.filter(f => f.asama === a.k).sort((x, y) => (x.sonraki_tarih || "9").localeCompare(y.sonraki_tarih || "9"));
-    const top = kart.reduce((s, f) => s + Number(f.sozlesme_tutari || f.teklif_tutari || 0), 0);
-    return `<div class="col" data-k="${a.k}" ondragover="event.preventDefault();this.classList.add('over')" ondragleave="this.classList.remove('over')" ondrop="birak(event,'${a.k}')">
+    const kart = is_.filter(i => i.asama === a.k).sort((x, y) => (x.sonraki_tarih || "9").localeCompare(y.sonraki_tarih || "9"));
+    const top = kart.reduce((s, i) => s + Number(i.sozlesme_tutari || i.teklif_tutari || 0), 0);
+    return `<div class="col" ondragover="event.preventDefault();this.classList.add('over')" ondragleave="this.classList.remove('over')" ondrop="birak(event,'${a.k}')">
       <div class="colh"><span>${a.ad} · ${kart.length}</span><small>${top ? tl(top) : ""}</small></div>
-      <div class="cards">${kart.map(f => `<div class="kc" draggable="true" ondragstart="event.dataTransfer.setData('text',  '${f.id}')" onclick="firmaAc('${f.id}')">
-        <div class="t">${esc(f.ad)}</div>
-        <div class="s">${esc(f.sonraki_adim || (a.kapali ? (f.kayip_nedeni || "") : "Sonraki adım yok"))}</div>
-        <div class="b"><span class="av" title="${esc(uyeAd(f.sorumlu))}">${esc(bas(uyeAd(f.sorumlu)))}</span>${a.kapali ? "" : tarihTag(f)}</div>
+      <div class="cards">${kart.map(i => `<div class="kc" draggable="true" ondragstart="event.dataTransfer.setData('text','${i.id}')" onclick="isAc('${i.id}')">
+        <div class="t">${esc(firmaOf(i).ad)}</div>
+        ${i.program ? `<div class="s" style="color:var(--accent);font-weight:500">${esc(i.program)}</div>` : ""}
+        <div class="s">${esc(i.sonraki_adim || (a.kapali ? (i.kayip_nedeni || "") : "Sonraki adım yok"))}</div>
+        <div class="b"><span class="av" title="${esc(uyeAd(i.sorumlu))}">${esc(bas(uyeAd(i.sorumlu)))}</span>${a.kapali ? "" : tarihTag(i)}</div>
       </div>`).join("")}</div></div>`;
   }).join("")}</div>`;
 }
@@ -436,276 +463,446 @@ async function birak(ev, k) {
   ev.preventDefault();
   document.querySelectorAll(".col").forEach(c => c.classList.remove("over"));
   const id = ev.dataTransfer.getData("text").trim();
-  const f = S.firmalar.find(x => x.id === id);
-  if (!f || f.asama === k) return;
-  const yeni = { ...f, asama: k };
-  if (k === "tamam") { yeni.sonraki_adim = null; yeni.sonraki_tarih = null; }
-  const hata = dogrula(yeni);
-  if (hata) { firmaAc(id, { asama: k }, hata); return; }
-  await firmaKaydetVeri(f, { asama: k, ...(k === "tamam" ? { sonraki_adim: null, sonraki_tarih: null } : {}) });
+  const i = S.isler.find(x => x.id === id);
+  if (!i || i.asama === k) return;
+  const patch = { asama: k, ...(k === "tamam" ? { sonraki_adim: null, sonraki_tarih: null } : {}) };
+  const hata = isDogrula({ ...i, ...patch });
+  if (hata) { isAc(id, { asama: k }, hata); return; }
+  await isKaydetVeri(i, patch);
+}
+
+/* ---------- İŞLER (tablo) ---------- */
+function filtreliIsler() {
+  const q = S.ara.toLocaleLowerCase("tr");
+  return S.isler.filter(i => {
+    const f = firmaOf(i);
+    return (!S.fAsama || (S.fAsama === "_acik" ? acik(i) : i.asama === S.fAsama)) &&
+      (!S.fSorumlu || i.sorumlu === S.fSorumlu) &&
+      (!S.fKaynak || isKaynak(i) === S.fKaynak) &&
+      (!q || [f.ad, f.sektor, f.nace_kodu, f.il_ilce, i.program, i.ihtiyac, i.notlar, i.sonraki_adim].join(" ").toLocaleLowerCase("tr").includes(q));
+  }).sort((a, b) => sira(a.asama) - sira(b.asama) || (a.sonraki_tarih || "9").localeCompare(b.sonraki_tarih || "9"));
+}
+const IS_BASLIK = `<th>Firma</th><th>Program / destek</th><th>Aşama</th><th>Sorumlu</th><th>Sonraki adım / kayıp nedeni</th><th>Tarih</th><th title="Plan, tarih/bütçe, finansman, karar verici">Puan</th><th class="num">Teklif / sözleşme</th><th class="num">Tahsil</th>`;
+function isTabloSatirlari(list) {
+  return list.map(i => { const f = firmaOf(i); return `<tr onclick="isAc('${i.id}')">
+    <td><b>${esc(f.ad)}</b><div class="sub">${esc(f.il_ilce || "")}</div></td>
+    <td class="wrap" style="min-width:160px">${esc(i.program || "")}</td>
+    <td>${asamaTag(i.asama)}</td>
+    <td>${esc(uyeAd(i.sorumlu))}</td>
+    <td class="wrap">${esc(i.sonraki_adim || (i.asama === "kayip" ? i.kayip_nedeni || "" : ""))}</td>
+    <td>${acik(i) ? tarihTag(i) : ""}</td>
+    <td>${puanTag(i)}</td>
+    <td class="num">${tl(i.sozlesme_tutari || i.teklif_tutari)}</td>
+    <td class="num">${tl0(tahsilIs(i.id))}</td>
+  </tr>`; }).join("") || `<tr><td colspan="9" class="empty">Kayıt bulunamadı.</td></tr>`;
+}
+function isListe() {
+  const list = filtreliIsler();
+  $("#main").innerHTML = `
+  <div class="toolbar">
+    <h2 style="margin:0;margin-right:auto">İşler <span style="color:var(--muted);font-weight:500">(${list.length})</span></h2>
+    <input type="search" placeholder="Ara: firma, program, ihtiyaç..." value="${esc(S.ara)}" oninput="S.ara=this.value;$('#tbody').innerHTML=isTabloSatirlari(filtreliIsler())">
+    <select onchange="S.fAsama=this.value;ciz()"><option value="">Tüm aşamalar</option><option value="_acik" ${S.fAsama === "_acik" ? "selected" : ""}>Sadece açık</option>${ASAMALAR.map(a => `<option value="${a.k}" ${S.fAsama === a.k ? "selected" : ""}>${a.ad}</option>`).join("")}</select>
+    <select onchange="S.fSorumlu=this.value;ciz()"><option value="">Tüm sorumlular</option>${S.members.map(m => `<option value="${m.user_id}" ${S.fSorumlu === m.user_id ? "selected" : ""}>${esc(m.ad)}</option>`).join("")}</select>
+    <select onchange="S.fKaynak=this.value;ciz()"><option value="">Tüm kaynaklar</option>${KAYNAKLAR.map(k => `<option ${S.fKaynak === k ? "selected" : ""}>${k}</option>`).join("")}</select>
+    <button class="btn" onclick="islerExcel()">Excel'e aktar</button>
+  </div>
+  <div class="tbl-wrap"><table><thead><tr>${IS_BASLIK}</tr></thead><tbody id="tbody">${isTabloSatirlari(list)}</tbody></table></div>`;
 }
 
 /* ---------- FİRMALAR (tablo) ---------- */
 function filtreliFirmalar() {
-  const q = S.ara.toLocaleLowerCase("tr");
-  return S.firmalar.filter(f =>
-    (!S.fAsama || (S.fAsama === "_acik" ? acik(f) : f.asama === S.fAsama)) &&
-    (!S.fSorumlu || f.sorumlu === S.fSorumlu) &&
-    (!S.fKaynak || f.kaynak === S.fKaynak) &&
-    (!q || [f.ad, f.sektor, f.nace_kodu, f.il_ilce, f.yetkili, f.ihtiyac, f.program, f.notlar].join(" ").toLocaleLowerCase("tr").includes(q))
-  ).sort((a, b) => sira(a.asama) - sira(b.asama) || (a.sonraki_tarih || "9").localeCompare(b.sonraki_tarih || "9"));
+  const q = S.fAra.toLocaleLowerCase("tr");
+  return S.firmalar.filter(f => (!S.fFKaynak || f.kaynak === S.fFKaynak) &&
+    (!q || [f.ad, f.sektor, f.nace_kodu, f.il_ilce, f.yetkili, f.notlar].join(" ").toLocaleLowerCase("tr").includes(q)))
+    .sort((a, b) => a.ad.localeCompare(b.ad, "tr"));
+}
+const FIRMA_BASLIK = `<th>Firma</th><th>Sektör</th><th>Kuruluş</th><th>Kaynak</th><th>İşler</th><th>Son iş</th><th class="num">Toplam sözleşme</th><th class="num">Toplam tahsil</th>`;
+function firmaTabloSatirlari(list) {
+  return list.map(f => {
+    const is_ = firmaIsleri(f.id), ac = is_.filter(acik).length, son = is_[0];
+    const soz = is_.reduce((s, i) => s + Number(i.sozlesme_tutari || 0), 0);
+    return `<tr onclick="firmaAc('${f.id}')">
+      <td><b>${esc(f.ad)}</b><div class="sub">${esc(f.il_ilce || "")}</div></td>
+      <td>${esc(f.sektor || "")}${f.nace_kodu ? `<div class="sub">NACE ${esc(f.nace_kodu)}</div>` : ""}</td>
+      <td>${kurulusHucre(f)}</td>
+      <td>${esc(f.kaynak || "")}</td>
+      <td>${is_.length} iş${ac ? ` <span class="tag blue">${ac} açık</span>` : ""}</td>
+      <td>${son ? `${asamaTag(son.asama)}<div class="sub">${esc(son.program || "")}</div>` : ""}</td>
+      <td class="num">${tl0(soz)}</td>
+      <td class="num">${tl0(tahsilFirma(f.id))}</td>
+    </tr>`;
+  }).join("") || `<tr><td colspan="8" class="empty">Kayıt bulunamadı.</td></tr>`;
 }
 function firmaListe() {
-  const fs = filtreliFirmalar();
+  const list = filtreliFirmalar();
   $("#main").innerHTML = `
   <div class="toolbar">
-    <h2 style="margin:0;margin-right:auto">Firmalar <span style="color:var(--muted);font-weight:500">(${fs.length})</span></h2>
-    <input type="search" placeholder="Ara: firma, sektör, NACE, ihtiyaç..." value="${esc(S.ara)}" oninput="S.ara=this.value;tabloGuncelle()">
-    <select onchange="S.fAsama=this.value;ciz()"><option value="">Tüm aşamalar</option><option value="_acik" ${S.fAsama === "_acik" ? "selected" : ""}>Sadece açık</option>${ASAMALAR.map(a => `<option value="${a.k}" ${S.fAsama === a.k ? "selected" : ""}>${a.ad}</option>`).join("")}</select>
-    <select onchange="S.fSorumlu=this.value;ciz()"><option value="">Tüm sorumlular</option>${S.members.map(m => `<option value="${m.user_id}" ${S.fSorumlu === m.user_id ? "selected" : ""}>${esc(m.ad)}</option>`).join("")}</select>
-    <select onchange="S.fKaynak=this.value;ciz()"><option value="">Tüm kaynaklar</option>${KAYNAKLAR.map(k => `<option ${S.fKaynak === k ? "selected" : ""}>${k}</option>`).join("")}</select>
-    <button class="btn" onclick="excelAktar()">Excel'e aktar</button>
+    <h2 style="margin:0;margin-right:auto">Firmalar <span style="color:var(--muted);font-weight:500">(${list.length})</span></h2>
+    <input type="search" placeholder="Ara: firma, sektör, NACE..." value="${esc(S.fAra)}" oninput="S.fAra=this.value;$('#tbody').innerHTML=firmaTabloSatirlari(filtreliFirmalar())">
+    <select onchange="S.fFKaynak=this.value;ciz()"><option value="">Tüm kaynaklar</option>${KAYNAKLAR.filter(k => k !== MEVCUT).map(k => `<option ${S.fFKaynak === k ? "selected" : ""}>${k}</option>`).join("")}</select>
+    <button class="btn" onclick="firmalarExcel()">Excel'e aktar</button>
   </div>
-  <div class="tbl-wrap"><table><thead><tr>
-    <th>Firma</th><th>Sektör</th><th>Kuruluş</th><th>Aşama</th><th>Sorumlu</th><th>Sonraki adım</th><th>Tarih</th><th title="Plan, tarih/bütçe, finansman, karar verici">Puan</th><th class="num">Teklif</th><th class="num">Tahsil</th>
-  </tr></thead><tbody id="tbody">${tabloSatirlari(fs)}</tbody></table></div>`;
+  <div class="tbl-wrap"><table><thead><tr>${FIRMA_BASLIK}</tr></thead><tbody id="tbody">${firmaTabloSatirlari(list)}</tbody></table></div>`;
 }
-function tabloSatirlari(fs) {
-  return fs.map(f => `<tr onclick="firmaAc('${f.id}')">
-    <td><b>${esc(f.ad)}</b><div style="color:var(--muted);font-size:12px">${esc(f.il_ilce || "")}</div></td>
-    <td>${esc(f.sektor || "")}${f.nace_kodu ? `<div style="color:var(--muted);font-size:12px">NACE ${esc(f.nace_kodu)}</div>` : ""}</td>
-    <td>${kurulusHucre(f)}</td>
-    <td><span class="tag ${f.asama === "kayip" ? "red" : f.asama === "tamam" ? "green" : "blue"}">${esc(asama(f.asama).ad)}</span></td>
-    <td>${esc(uyeAd(f.sorumlu))}</td>
-    <td class="wrap">${esc(f.sonraki_adim || (f.asama === "kayip" ? f.kayip_nedeni || "" : ""))}</td>
-    <td>${acik(f) ? tarihTag(f) : ""}</td>
-    <td>${puanTag(f)}</td>
-    <td class="num">${tl(f.sozlesme_tutari || f.teklif_tutari)}</td>
-    <td class="num">${tl(toplamTahsil(f.id))}</td>
-  </tr>`).join("") || `<tr><td colspan="10" class="empty">Kayıt bulunamadı.</td></tr>`;
-}
-function tabloGuncelle() { const tb = $("#tbody"); if (tb) tb.innerHTML = tabloSatirlari(filtreliFirmalar()); }
-const yas = f => { if (!f.kurulus_tarihi) return null; const k = new Date(f.kurulus_tarihi), n = new Date(); let y = n.getFullYear() - k.getFullYear(); if (n.getMonth() < k.getMonth() || (n.getMonth() === k.getMonth() && n.getDate() < k.getDate())) y--; return y; };
-const kurulusHucre = f => f.kurulus_tarihi ? `${String(f.kurulus_tarihi).slice(0, 4)} <span style="color:var(--muted);font-size:12px">(${yas(f) < 1 ? "1 yıldan az" : yas(f) + " yıl"})</span>` : "";
-const puanTag = f => { const p = puan(f); return `<span class="tag ${p >= 3 ? "green" : p === 2 ? "amber" : ""}">${p}/4</span>`; };
 
-function excelAktar() {
-  const sutun = [["Firma", f => f.ad], ["Sektör", f => f.sektor], ["NACE kodu", f => f.nace_kodu], ["İl/İlçe", f => f.il_ilce], ["Kuruluş tarihi", f => fd(f.kurulus_tarihi)], ["Firma yaşı", f => yas(f)], ["Yetkili", f => f.yetkili], ["Telefon", f => f.telefon], ["E-posta", f => f.eposta],
-    ["Kaynak", f => f.kaynak], ["Çözüm ortağı", f => (S.ortaklar.find(o => o.id === f.ortak_id) || {}).ad], ["İhtiyaç", f => f.ihtiyac], ["Program", f => f.program],
-    ["Yatırım tarihi", f => fd(f.yatirim_tarihi)], ["Bütçe", f => f.butce], ["Puan (4)", f => puan(f)], ["Aşama", f => asama(f.asama).ad], ["Sorumlu", f => uyeAd(f.sorumlu)],
-    ["Sonraki adım", f => f.sonraki_adim], ["Adım tarihi", f => fd(f.sonraki_tarih)], ["Teklif", f => f.teklif_tutari], ["Sözleşme", f => f.sozlesme_tutari],
-    ["Tahsil edilen", f => toplamTahsil(f.id)], ["Kayıp nedeni", f => f.kayip_nedeni], ["Notlar", f => f.notlar], ["Oluşturma", f => fd(f.created_at)]];
+/* ---------- Excel ---------- */
+function csvIndir(ad, sutun, rows) {
   const h = v => { v = v == null ? "" : String(v); return /[";\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
-  const csv = "﻿" + [sutun.map(s => s[0]).join(";"), ...filtreliFirmalar().map(f => sutun.map(s => h(s[1](f))).join(";"))].join("\r\n");
+  const csv = "﻿" + [sutun.map(s => s[0]).join(";"), ...rows.map(r => sutun.map(s => h(s[1](r))).join(";"))].join("\r\n");
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
-  a.download = `asge-izmir-firmalar-${ymd()}.csv`; a.click();
+  a.download = `${ad}-${ymd()}.csv`; a.click();
+}
+const FIRMA_SUTUN = [["Firma", f => f.ad], ["Sektör", f => f.sektor], ["NACE kodu", f => f.nace_kodu], ["İl/İlçe", f => f.il_ilce], ["Kuruluş tarihi", f => fd(f.kurulus_tarihi)], ["Firma yaşı", f => yas(f)],
+  ["Yetkili", f => f.yetkili], ["Telefon", f => f.telefon], ["E-posta", f => f.eposta], ["Kaynak", f => f.kaynak], ["Çözüm ortağı", f => (S.ortaklar.find(o => o.id === f.ortak_id) || {}).ad]];
+function islerExcel() {
+  const F = i => firmaOf(i);
+  csvIndir("asge-izmir-isler", [...FIRMA_SUTUN.map(([n, fn]) => [n, i => fn(F(i))]),
+    ["Program / destek", i => i.program], ["İhtiyaç", i => i.ihtiyac], ["Yatırım tarihi", i => fd(i.yatirim_tarihi)], ["Bütçe", i => i.butce], ["İş kaynağı", i => isKaynak(i)], ["Puan (4)", i => puan(i)],
+    ["Aşama", i => asama(i.asama).ad], ["Sorumlu", i => uyeAd(i.sorumlu)], ["Sonraki adım", i => i.sonraki_adim], ["Adım tarihi", i => fd(i.sonraki_tarih)],
+    ["Teklif", i => i.teklif_tutari], ["Sözleşme", i => i.sozlesme_tutari], ["Tahsil edilen", i => tahsilIs(i.id)], ["Kayıp nedeni", i => i.kayip_nedeni], ["İş notları", i => i.notlar], ["İş açılış", i => fd(i.created_at)]],
+    filtreliIsler());
+}
+function firmalarExcel() {
+  csvIndir("asge-izmir-firmalar", [...FIRMA_SUTUN, ["İş sayısı", f => firmaIsleri(f.id).length], ["Açık iş", f => firmaIsleri(f.id).filter(acik).length],
+    ["Toplam sözleşme", f => firmaIsleri(f.id).reduce((s, i) => s + Number(i.sozlesme_tutari || 0), 0)], ["Toplam tahsil", f => tahsilFirma(f.id)], ["Notlar", f => f.notlar], ["Kayıt tarihi", f => fd(f.created_at)]],
+    filtreliFirmalar());
 }
 
-/* ---------- FİRMA PENCERESİ ---------- */
-function dogrula(f) {
-  if (!f.ad || !f.ad.trim()) return "Firma adı zorunlu.";
-  if (f.asama === "kayip" && !f.kayip_nedeni) return "Kaybedildi olarak işaretlemek için kayıp nedeni seçin.";
-  if (acik(f)) {
-    if (!f.sorumlu) return "Açık bir kayıt için sorumlu kişi seçin.";
-    if (!f.sonraki_adim || !f.sonraki_adim.trim()) return "Sonraki adımı yazın (ör. \"Perşembe makine listesi gelecek, cuma uygunluk görüşmesi\").";
-    if (!f.sonraki_tarih) return "Sonraki adımın tarihini girin.";
-  }
-  return null;
-}
+/* ---------- form parçaları ---------- */
 function sec(name, liste, val, bos = "Seçin") {
   return `<select name="${name}"><option value="">${bos}</option>${liste.map(x => { const [v, t] = Array.isArray(x) ? x : [x, x]; return `<option value="${esc(v)}" ${String(val ?? "") === String(v) ? "selected" : ""}>${esc(t)}</option>`; }).join("")}</select>`;
 }
-function firmaAc(id, onAyar = {}, hata = "") {
-  const f0 = id ? S.firmalar.find(x => x.id === id) : { asama: "aday", sorumlu: S.user.id, sonraki_tarih: ymd(addDays(2)) };
-  if (!f0) return;
-  const f = { ...f0, ...onAyar };
-  const akt = id ? S.aktiviteler.filter(a => a.firma_id === id).sort((a, b) => b.tarih.localeCompare(a.tarih)) : [];
-  const tah = id ? S.tahsilatlar.filter(a => a.firma_id === id).sort((a, b) => b.tarih.localeCompare(a.tarih)) : [];
+function firmaAlanlari(f) {
+  return `<div class="fg">
+    <label class="f req">Firma adı<input name="ad" value="${esc(f.ad)}" autocomplete="off"></label>
+    <label class="f">Sektör<input name="sektor" value="${esc(f.sektor)}"></label>
+    <label class="f">NACE kodu<input name="nace_kodu" value="${esc(f.nace_kodu)}" placeholder="ör. 25.62.01"></label>
+    <label class="f">İl / ilçe / OSB<input name="il_ilce" value="${esc(f.il_ilce)}"></label>
+    <label class="f">Kuruluş tarihi<input name="kurulus_tarihi" type="date" value="${esc(f.kurulus_tarihi || "")}"></label>
+    <label class="f">Karar verici / yetkili<input name="yetkili" value="${esc(f.yetkili)}"></label>
+    <label class="f">Telefon<input name="telefon" value="${esc(f.telefon)}"></label>
+    <label class="f">E-posta<input name="eposta" value="${esc(f.eposta)}"></label>
+    <label class="f">Kaynak (firma ilk nereden geldi)${sec("kaynak", KAYNAKLAR.filter(k => k !== MEVCUT), f.kaynak)}</label>
+    <label class="f">Getiren çözüm ortağı${sec("ortak_id", S.ortaklar.map(o => [o.id, o.ad]), f.ortak_id, "—")}</label>
+  </div>
+  <label class="f">Firma notları<textarea name="notlar">${esc(f.notlar)}</textarea></label>`;
+}
+function firmaOku(fm) {
+  const v = n => fm[n].value.trim() || null;
+  return { ad: fm.ad.value.trim(), sektor: v("sektor"), nace_kodu: v("nace_kodu"), il_ilce: v("il_ilce"), kurulus_tarihi: v("kurulus_tarihi"), yetkili: v("yetkili"),
+    telefon: v("telefon"), eposta: v("eposta"), kaynak: v("kaynak"), ortak_id: v("ortak_id"), notlar: v("notlar") };
+}
+function isAlanlari(i, opt = {}) {
+  return `<div class="sec">Durum ve sonraki adım</div>
+  <div class="fg">
+    <label class="f">Aşama${sec("asama", ASAMALAR.map(a => [a.k, a.ad]), i.asama, "—").replace('<option value="">—</option>', "")}</label>
+    <label class="f req">Sorumlu${sec("sorumlu", S.members.map(m => [m.user_id, m.ad]), i.sorumlu)}</label>
+    <label class="f req" style="grid-column:span 2">Sonraki adım<input name="sonraki_adim" value="${esc(i.sonraki_adim)}" placeholder="Kim, ne yapacak? Somut yazın."></label>
+    <label class="f req">Adım tarihi<input name="sonraki_tarih" type="date" value="${esc(i.sonraki_tarih ? String(i.sonraki_tarih).slice(0, 10) : "")}"></label>
+    <label class="f">Teklif tutarı (₺)<input name="teklif_tutari" inputmode="decimal" value="${esc(i.teklif_tutari ?? "")}"></label>
+    <label class="f">Sözleşme tutarı (₺)<input name="sozlesme_tutari" inputmode="decimal" value="${esc(i.sozlesme_tutari ?? "")}"></label>
+    <label class="f kayipAlan">Kayıp nedeni${sec("kayip_nedeni", KAYIP_NEDENLERI, i.kayip_nedeni)}</label>
+  </div>
+  <div class="sec">İş bilgileri</div>
+  <div class="fg">
+    <label class="f" style="grid-column:span 2">İlgili program / destek<input name="program" value="${esc(i.program)}" placeholder="ör. Yatırım teşvik belgesi, KOSGEB Ar-Ge"></label>
+    <label class="f" style="grid-column:span 2">İhtiyaç / yatırım planı<input name="ihtiyac" value="${esc(i.ihtiyac)}" placeholder="ör. 2 adet CNC tezgâh, kapasite artışı"></label>
+    <label class="f">Yatırım / harcama tarihi<input name="yatirim_tarihi" type="date" value="${esc(i.yatirim_tarihi || "")}"></label>
+    <label class="f">Tahmini bütçe (₺)<input name="butce" inputmode="decimal" value="${esc(i.butce ?? "")}"></label>
+    ${opt.kaynakGizle ? "" : `<label class="f">Bu işin kaynağı${sec("is_kaynak", KAYNAKLAR, i.kaynak)}</label>`}
+  </div>
+  <div class="sub" style="margin-bottom:6px">Nitelik kontrolü — olumlu olanları işaretleyin</div>
+  <div class="checks">
+    <label><input type="checkbox" name="q_plan" ${i.q_plan ? "checked" : ""}> Somut yatırım / harcama planı var</label>
+    <label><input type="checkbox" name="q_tarih" ${i.q_tarih ? "checked" : ""}> Tarihi ve bütçesi belli</label>
+    <label><input type="checkbox" name="q_finans" ${i.q_finans ? "checked" : ""}> Finansman imkânı / gerçekçi planı var</label>
+    <label><input type="checkbox" name="q_karar" ${i.q_karar ? "checked" : ""}> Karar vericiye ulaşılıyor</label>
+  </div>
+  <label class="f">İş notları<textarea name="is_notlar">${esc(i.notlar)}</textarea></label>`;
+}
+function isOku(fm) {
+  const v = n => (fm[n] && fm[n].value.trim()) || null;
+  return {
+    asama: fm.asama.value, sorumlu: v("sorumlu"), sonraki_adim: v("sonraki_adim"), sonraki_tarih: v("sonraki_tarih"),
+    teklif_tutari: num(fm.teklif_tutari.value), sozlesme_tutari: num(fm.sozlesme_tutari.value),
+    kayip_nedeni: fm.asama.value === "kayip" ? v("kayip_nedeni") : null,
+    program: v("program"), ihtiyac: v("ihtiyac"), yatirim_tarihi: v("yatirim_tarihi"), butce: num(fm.butce.value),
+    ...(fm.is_kaynak ? { kaynak: v("is_kaynak") } : {}),
+    q_plan: fm.q_plan.checked, q_tarih: fm.q_tarih.checked, q_finans: fm.q_finans.checked, q_karar: fm.q_karar.checked,
+    notlar: v("is_notlar"),
+  };
+}
+function isDogrula(i) {
+  if (i.asama === "kayip" && !i.kayip_nedeni) return "Kaybedildi olarak işaretlemek için kayıp nedeni seçin.";
+  if (acik(i)) {
+    if (!i.sorumlu) return "Açık bir iş için sorumlu kişi seçin.";
+    if (!i.sonraki_adim || !i.sonraki_adim.trim()) return "Sonraki adımı yazın (ör. \"Perşembe makine listesi gelecek, cuma uygunluk görüşmesi\").";
+    if (!i.sonraki_tarih) return "Sonraki adımın tarihini girin.";
+  }
+  return null;
+}
+function modalAc(html, id = "firmaOv") {
+  kapat();
   const ov = document.createElement("div");
-  ov.className = "ov"; ov.id = "firmaOv";
+  ov.className = "ov"; ov.id = id;
   ov.onmousedown = e => { if (e.target === ov) kapat(); };
-  ov.innerHTML = `
-  <form class="modal" onsubmit="firmaKaydet(event,'${id || ""}')">
-    <div class="mh"><h2>${id ? esc(f.ad) : "Yeni firma"}</h2><button type="button" class="x" onclick="kapat()">×</button></div>
+  ov.innerHTML = html;
+  document.body.appendChild(ov);
+  ov.querySelectorAll("label.req").forEach(l => { const sp = document.createElement("span"); sp.className = "rq"; sp.textContent = " *"; l.firstChild.after(sp); });
+  const fm = $("form", ov);
+  if (fm && fm.asama) { const g = () => ov.querySelectorAll(".kayipAlan").forEach(x => x.classList.toggle("hidden", fm.asama.value !== "kayip")); fm.asama.addEventListener("change", g); g(); }
+  return ov;
+}
+function kapat() { ["#firmaOv", "#kucukOv"].forEach(s => { const o = $(s); if (o) o.remove(); }); }
+document.addEventListener("keydown", e => { if (e.key !== "Escape") return; if ($("#firmaOv") || $("#kucukOv")) kapat(); else listeKapat(); });
+function hataGoster(m) { const e = $("#ferr"); if (e) e.innerHTML = `<div class="err">${esc(m)}</div>`; const o = $("#firmaOv") || $("#kucukOv"); if (o) o.scrollTop = 0; }
+
+function aktiviteListesi(list, isGoster) {
+  return list.map(a => {
+    const i = isGoster && a.is_id ? S.isler.find(x => x.id === a.is_id) : null;
+    return `<div class="tli ${a.tur === "Aşama" ? "sys" : ""}"><b>${esc(a.tur)}</b>${i ? ` <span class="tag blue">${esc(i.program || "İş")}</span>` : isGoster && !a.is_id ? ` <span class="tag">Genel</span>` : ""} · ${esc(a.aciklama)}
+      <div class="m">${fdt(a.tarih)} · ${esc(uyeAd(a.kullanici))}${a.tur !== "Aşama" ? ` · <a href="#" onclick="aktiviteSil('${a.id}');return false">sil</a>` : ""}</div></div>`;
+  }).join("") || `<div class="empty">Kayıt yok.</div>`;
+}
+const aktiviteFormu = (dugme, ipucu) => `
+  <div class="row" style="margin-bottom:6px">
+    <select id="akTur" style="width:150px">${AKTIVITE_TURLERI.map(t => `<option>${t}</option>`).join("")}</select>
+    <input id="akTarih" type="date" value="${ymd()}" style="width:150px">
+  </div>
+  <textarea id="akNot" placeholder="Ne konuşuldu? Sonuç ne?" style="margin-bottom:6px"></textarea>
+  ${ipucu ? `<div class="sub" style="margin-bottom:6px">${ipucu}</div>` : ""}
+  <button type="button" class="btn sm" onclick="${dugme}">Görüşmeyi ekle</button>`;
+const akTarih = () => { const t = $("#akTarih").value || ymd(); return t === ymd() ? new Date().toISOString() : new Date(t + "T12:00:00").toISOString(); };
+
+/* ---------- YENİ FİRMA (firma + ilk iş) ---------- */
+function yeniKayit() {
+  const me = S.user.id;
+  modalAc(`<form class="modal" onsubmit="yeniKaydet(event)">
+    <div class="mh"><h2>Yeni firma</h2><button type="button" class="x" onclick="kapat()">×</button></div>
+    <div class="mb">
+      <div id="ferr"></div>
+      <div class="sec">Firma</div>
+      <div id="benzer"></div>
+      ${firmaAlanlari({})}
+      <div style="border-top:1px solid var(--line);margin:8px 0 14px"></div>
+      <div class="sub" style="margin-bottom:8px">İlk iş — sonraki işleri firma kartından "Yeni iş aç" ile eklersiniz.</div>
+      ${isAlanlari({ asama: "aday", sorumlu: me, sonraki_tarih: ymd(addDays(2)) }, { kaynakGizle: true })}
+    </div>
+    <div class="mf"><button type="button" class="btn" onclick="kapat()">Vazgeç</button><button class="btn pri">Kaydet</button></div>
+  </form>`);
+  const fm = $("#firmaOv form");
+  fm.ad.addEventListener("input", () => benzerGoster(fm.ad.value));
+  fm.ad.focus();
+}
+const normAd = s => (s || "").toLocaleLowerCase("tr").replace(/\b(a\.?ş\.?|ltd\.?|şti\.?|san\.?|tic\.?|ve|limited|şirketi|anonim)\b/g, " ").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+function benzerGoster(ad) {
+  const n = normAd(ad), el = $("#benzer"); if (!el) return;
+  if (n.length < 3) { el.innerHTML = ""; return; }
+  const b = S.firmalar.filter(f => { const m = normAd(f.ad); return m && (m.includes(n) || n.includes(m)); }).slice(0, 3);
+  el.innerHTML = b.map(f => `<div class="hint">Kayıtlı firma: <b>${esc(f.ad)}</b> (${firmaIsleri(f.id).length} iş) — yeniden kayıt açmak yerine
+    <button type="button" class="btn sm" onclick="isAc(null,{firma_id:'${f.id}'})">Bu firmaya yeni iş aç</button>
+    <button type="button" class="btn sm" onclick="firmaAc('${f.id}')">Firma kartını aç</button></div>`).join("");
+}
+async function yeniKaydet(ev) {
+  ev.preventDefault();
+  const fm = ev.target, f = firmaOku(fm), i = isOku(fm);
+  if (!f.ad) return hataGoster("Firma adı zorunlu.");
+  const h = isDogrula(i); if (h) return hataGoster(h);
+  const btn = $("button.pri", fm); btn.disabled = true;
+  try {
+    const yf = await db.insert("firmalar", f);
+    const yi = await db.insert("isler", { ...i, firma_id: yf.id, kaynak: f.kaynak, en_ileri: i.asama === "kayip" ? 0 : sira(i.asama) });
+    await db.insert("aktiviteler", { firma_id: yf.id, is_id: yi.id, tur: "Aşama", yeni_asama: yi.asama, aciklama: "Kayıt oluşturuldu → " + asama(yi.asama).ad, kullanici: S.user.id });
+    await yukle(); kapat(); ciz(); toast("Kaydedildi");
+  } catch (e) { btn.disabled = false; hataGoster("Kaydedilemedi: " + e.message); }
+}
+
+/* ---------- FİRMA KARTI ---------- */
+function firmaAc(id) {
+  const f = S.firmalar.find(x => x.id === id); if (!f) return;
+  const is_ = firmaIsleri(id);
+  const akt = S.aktiviteler.filter(a => a.firma_id === id).sort((a, b) => b.tarih.localeCompare(a.tarih));
+  const soz = is_.reduce((s, i) => s + Number(i.sozlesme_tutari || 0), 0), tah = tahsilFirma(id);
+  modalAc(`<form class="modal" onsubmit="firmaKaydet(event,'${id}')">
+    <div class="mh"><h2>${esc(f.ad)}</h2><button type="button" class="x" onclick="kapat()">×</button></div>
+    <div class="mb">
+      <div id="ferr"></div>
+      <div class="ozet">
+        <div><div class="sub">İş</div><b>${is_.length}</b> <span class="sub">(${is_.filter(acik).length} açık)</span></div>
+        <div><div class="sub">Toplam sözleşme</div><b>${tl(soz) || "—"}</b></div>
+        <div><div class="sub">Toplam tahsilat</div><b>${tl(tah) || "—"}</b></div>
+        <div><div class="sub">Müşteri</div><b>${fd(f.created_at)}</b> <span class="sub">tarihinden beri</span></div>
+      </div>
+      <div class="row" style="justify-content:space-between;margin:4px 0 8px"><div class="sec" style="margin:0">İşler</div><button type="button" class="btn pri sm" onclick="isAc(null,{firma_id:'${id}'})">+ Yeni iş aç</button></div>
+      <div class="tbl-wrap" style="margin-bottom:16px"><table><thead><tr><th>Program / destek</th><th>Aşama</th><th>Sorumlu</th><th>Sonraki adım</th><th>Açılış</th><th class="num">Sözleşme</th><th class="num">Tahsil</th></tr></thead><tbody>
+        ${is_.map(i => `<tr onclick="isAc('${i.id}')"><td class="wrap" style="min-width:160px"><b>${esc(i.program || "(program yazılmamış)")}</b></td><td>${asamaTag(i.asama)}</td><td>${esc(uyeAd(i.sorumlu))}</td><td class="wrap">${esc(i.sonraki_adim || i.kayip_nedeni || "")} ${acik(i) ? tarihTag(i) : ""}</td><td>${fd(i.created_at)}</td><td class="num">${tl0(i.sozlesme_tutari)}</td><td class="num">${tl0(tahsilIs(i.id))}</td></tr>`).join("") || `<tr><td colspan="7" class="empty">Henüz iş yok.</td></tr>`}
+      </tbody></table></div>
+      <div class="sec">Firma bilgileri</div>
+      ${firmaAlanlari(f)}
+      <div class="split" style="grid-template-columns:1fr">
+        <div>
+          <div class="sec">Tüm görüşme kayıtları</div>
+          ${aktiviteFormu(`firmaAktiviteEkle('${id}')`, "Buradan eklenen kayıt belirli bir işe bağlı olmaz (ör. tanışma, nezaket ziyareti). Bir işle ilgiliyse o işin penceresinden ekleyin.")}
+          <div class="tl" style="margin-top:10px">${aktiviteListesi(akt, true)}</div>
+        </div>
+      </div>
+    </div>
+    <div class="mf">
+      <button type="button" class="btn danger left" onclick="firmaSil('${id}')">Firmayı sil</button>
+      <button type="button" class="btn" onclick="kapat()">Kapat</button>
+      <button class="btn pri">Firma bilgilerini kaydet</button>
+    </div>
+  </form>`);
+}
+async function firmaKaydet(ev, id) {
+  ev.preventDefault();
+  const f = firmaOku(ev.target);
+  if (!f.ad) return hataGoster("Firma adı zorunlu.");
+  try { await db.update("firmalar", id, f); await yukle(); ciz(); firmaAc(id); toast("Kaydedildi"); }
+  catch (e) { hataGoster("Kaydedilemedi: " + e.message); }
+}
+async function firmaSil(id) {
+  const f = S.firmalar.find(x => x.id === id), n = firmaIsleri(id).length;
+  if (!confirm(`"${f.ad}" firması, ${n} işi ve tüm görüşme/tahsilat kayıtları silinsin mi? Bu işlem geri alınamaz.`)) return;
+  try { await db.remove("firmalar", id); await yukle(); kapat(); ciz(); toast("Silindi"); } catch (e) { toast("Silinemedi: " + e.message); }
+}
+async function firmaAktiviteEkle(fid) {
+  const not = $("#akNot").value.trim();
+  if (!not) return hataGoster("Görüşme notunu yazın.");
+  try { await db.insert("aktiviteler", { firma_id: fid, is_id: null, tur: $("#akTur").value, aciklama: not, tarih: akTarih(), kullanici: S.user.id }); await yukle(); ciz(); firmaAc(fid); toast("Görüşme eklendi"); }
+  catch (e) { hataGoster("Eklenemedi: " + e.message); }
+}
+
+/* ---------- İŞ PENCERESİ ---------- */
+function isAc(id, onAyar = {}, hata = "") {
+  let i0;
+  if (id) { i0 = S.isler.find(x => x.id === id); if (!i0) return; }
+  else {
+    const fid = onAyar.firma_id, f = S.firmalar.find(x => x.id === fid) || {};
+    i0 = { firma_id: fid, asama: "aday", sorumlu: S.user.id, sonraki_tarih: ymd(addDays(2)), kaynak: firmaIsleri(fid).length ? MEVCUT : f.kaynak };
+  }
+  const i = { ...i0, ...onAyar };
+  const f = firmaOf(i);
+  const akt = id ? S.aktiviteler.filter(a => a.is_id === id).sort((a, b) => b.tarih.localeCompare(a.tarih)) : [];
+  const tah = id ? S.tahsilatlar.filter(a => a.is_id === id).sort((a, b) => b.tarih.localeCompare(a.tarih)) : [];
+  const digerAcik = firmaIsleri(i.firma_id).filter(x => x.id !== id && acik(x)).length;
+  modalAc(`<form class="modal" onsubmit="isKaydet(event,'${id || ""}','${i.firma_id}')">
+    <div class="mh"><div><h2>${esc(f.ad)}</h2><div class="sub" style="margin-top:2px">${id ? esc(i.program || "İş") : "Yeni iş"}${digerAcik ? ` · firmanın ${digerAcik} başka açık işi var` : ""}</div></div>
+      <div class="row"><button type="button" class="btn sm" onclick="firmaAc('${i.firma_id}')">Firma kartı</button><button type="button" class="x" onclick="kapat()">×</button></div></div>
     <div class="mb">
       <div id="ferr">${hata ? `<div class="err">${esc(hata)}</div>` : ""}</div>
-      <div class="sec">Durum ve sonraki adım</div>
-      <div class="fg">
-        <label class="f">Aşama${sec("asama", ASAMALAR.map(a => [a.k, a.ad]), f.asama, "—").replace('<option value="">—</option>', "")}</label>
-        <label class="f req">Sorumlu${sec("sorumlu", S.members.map(m => [m.user_id, m.ad]), f.sorumlu)}</label>
-        <label class="f req" style="grid-column:span 2">Sonraki adım<input name="sonraki_adim" value="${esc(f.sonraki_adim)}" placeholder="Kim, ne yapacak? Somut yazın."></label>
-        <label class="f req">Adım tarihi<input name="sonraki_tarih" type="date" value="${esc(f.sonraki_tarih ? String(f.sonraki_tarih).slice(0, 10) : "")}"></label>
-        <label class="f">Teklif tutarı (₺)<input name="teklif_tutari" inputmode="decimal" value="${esc(f.teklif_tutari ?? "")}"></label>
-        <label class="f">Sözleşme tutarı (₺)<input name="sozlesme_tutari" inputmode="decimal" value="${esc(f.sozlesme_tutari ?? "")}"></label>
-        <label class="f" id="kayipAlan">Kayıp nedeni${sec("kayip_nedeni", KAYIP_NEDENLERI, f.kayip_nedeni)}</label>
-      </div>
-
-      <div class="sec">Firma</div>
-      <div class="fg">
-        <label class="f req">Firma adı<input name="ad" value="${esc(f.ad)}"></label>
-        <label class="f">Sektör<input name="sektor" value="${esc(f.sektor)}"></label>
-        <label class="f">NACE kodu<input name="nace_kodu" value="${esc(f.nace_kodu)}" placeholder="ör. 25.62.01"></label>
-        <label class="f">İl / ilçe / OSB<input name="il_ilce" value="${esc(f.il_ilce)}"></label>
-        <label class="f">Kuruluş tarihi<input name="kurulus_tarihi" type="date" value="${esc(f.kurulus_tarihi || "")}"></label>
-        <label class="f">Karar verici / yetkili<input name="yetkili" value="${esc(f.yetkili)}"></label>
-        <label class="f">Telefon<input name="telefon" value="${esc(f.telefon)}"></label>
-        <label class="f">E-posta<input name="eposta" value="${esc(f.eposta)}"></label>
-        <label class="f">Kaynak${sec("kaynak", KAYNAKLAR, f.kaynak)}</label>
-        <label class="f">Getiren çözüm ortağı${sec("ortak_id", S.ortaklar.map(o => [o.id, o.ad]), f.ortak_id, "—")}</label>
-      </div>
-
-      <div class="sec">İhtiyaç</div>
-      <div class="fg">
-        <label class="f" style="grid-column:span 2">İhtiyaç / yatırım planı<input name="ihtiyac" value="${esc(f.ihtiyac)}" placeholder="ör. 2 adet CNC tezgâh, kapasite artışı"></label>
-        <label class="f">İlgili program / destek<input name="program" value="${esc(f.program)}"></label>
-        <label class="f">Yatırım / harcama tarihi<input name="yatirim_tarihi" type="date" value="${esc(f.yatirim_tarihi || "")}"></label>
-        <label class="f">Tahmini bütçe (₺)<input name="butce" inputmode="decimal" value="${esc(f.butce ?? "")}"></label>
-      </div>
-      <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Nitelik kontrolü — olumlu olanları işaretleyin</div>
-      <div class="checks">
-        <label><input type="checkbox" name="q_plan" ${f.q_plan ? "checked" : ""}> Somut yatırım / harcama planı var</label>
-        <label><input type="checkbox" name="q_tarih" ${f.q_tarih ? "checked" : ""}> Tarihi ve bütçesi belli</label>
-        <label><input type="checkbox" name="q_finans" ${f.q_finans ? "checked" : ""}> Finansman imkânı / gerçekçi planı var</label>
-        <label><input type="checkbox" name="q_karar" ${f.q_karar ? "checked" : ""}> Karar vericiye ulaşılıyor</label>
-      </div>
-      <label class="f">Notlar<textarea name="notlar">${esc(f.notlar)}</textarea></label>
-
+      ${isAlanlari(i)}
       ${id ? `
       <div class="split">
         <div>
           <div class="sec">Görüşme kayıtları</div>
-          <div class="row" style="margin-bottom:6px;align-items:flex-start">
-            <select id="akTur" style="width:150px">${AKTIVITE_TURLERI.map(t => `<option>${t}</option>`).join("")}</select>
-            <input id="akTarih" type="date" value="${ymd()}" style="width:150px">
-          </div>
-          <textarea id="akNot" placeholder="Ne konuşuldu? Sonuç ne?" style="margin-bottom:6px"></textarea>
-          <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Kaydederken yukarıdaki "Sonraki adım" ve tarihini de güncelleyin.</div>
-          <button type="button" class="btn sm" onclick="aktiviteEkle('${id}')">Görüşmeyi ekle</button>
-          <div class="tl" style="margin-top:10px">${akt.map(a => `<div class="tli ${a.tur === "Aşama" ? "sys" : ""}"><b>${esc(a.tur)}</b> · ${esc(a.aciklama)}<div class="m">${fdt(a.tarih)} · ${esc(uyeAd(a.kullanici))}${a.tur !== "Aşama" ? ` · <a href="#" onclick="aktiviteSil('${a.id}','${id}');return false">sil</a>` : ""}</div></div>`).join("") || `<div class="empty">Kayıt yok.</div>`}</div>
+          ${aktiviteFormu(`isAktiviteEkle('${id}')`, 'Kaydederken yukarıdaki "Sonraki adım" ve tarihini de güncelleyin.')}
+          <div class="tl" style="margin-top:10px">${aktiviteListesi(akt, false)}</div>
         </div>
         <div>
-          <div class="sec">Tahsilatlar <span style="color:var(--text)">${tl(tah.reduce((s, t) => s + Number(t.tutar || 0), 0)) || ""}</span></div>
+          <div class="sec">Tahsilatlar <span style="color:var(--text)">${tl0(tah.reduce((s, t) => s + Number(t.tutar || 0), 0))}</span></div>
           <div class="row" style="margin-bottom:6px">
             <input id="thTarih" type="date" value="${ymd()}" style="width:150px">
             <input id="thTutar" placeholder="Tutar ₺" inputmode="decimal" style="width:130px">
           </div>
           <input id="thAc" placeholder="Açıklama (ör. peşinat, 2. hakediş)" style="margin-bottom:6px">
           <button type="button" class="btn sm" onclick="tahsilatEkle('${id}')">Tahsilat ekle</button>
-          <div class="tl" style="margin-top:10px">${tah.map(t => `<div class="tli"><b>${tl(t.tutar)}</b> · ${esc(t.aciklama || "")}<div class="m">${fd(t.tarih)} · ${esc(uyeAd(t.kullanici))} · <a href="#" onclick="tahsilatSil('${t.id}','${id}');return false">sil</a></div></div>`).join("") || `<div class="empty">Tahsilat yok.</div>`}</div>
+          <div class="tl" style="margin-top:10px">${tah.map(t => `<div class="tli"><b>${tl(t.tutar)}</b> · ${esc(t.aciklama || "")}<div class="m">${fd(t.tarih)} · ${esc(uyeAd(t.kullanici))} · <a href="#" onclick="tahsilatSil('${t.id}');return false">sil</a></div></div>`).join("") || `<div class="empty">Tahsilat yok.</div>`}</div>
         </div>
       </div>` : ""}
     </div>
     <div class="mf">
-      ${id ? `<button type="button" class="btn danger left" onclick="firmaSil('${id}')">Sil</button>` : ""}
+      ${id ? `<button type="button" class="btn danger left" onclick="isSil('${id}')">İşi sil</button>` : ""}
       <button type="button" class="btn" onclick="kapat()">Vazgeç</button>
       <button class="btn pri">Kaydet</button>
     </div>
-  </form>`;
-  kapat();
-  document.body.appendChild(ov); yildiz(ov);
-  const fm = $("form", ov);
-  const kayipGor = () => { $("#kayipAlan", ov).classList.toggle("hidden", fm.asama.value !== "kayip"); };
-  fm.asama.addEventListener("change", kayipGor); kayipGor();
-  if (!id) fm.ad.focus();
+  </form>`);
+  if (!id) $("#firmaOv input[name=program]").focus();
 }
-function yildiz(el) { el.querySelectorAll("label.req").forEach(l => { const sp = document.createElement("span"); sp.className = "rq"; sp.textContent = " *"; l.firstChild.after(sp); }); }
-function kapat() { const o = $("#firmaOv"); if (o) o.remove(); const o2 = $("#kucukOv"); if (o2) o2.remove(); }
-document.addEventListener("keydown", e => { if (e.key !== "Escape") return; if ($("#firmaOv") || $("#kucukOv")) kapat(); else listeKapat(); });
-
-function formOku(fm) {
-  const v = n => fm[n].value.trim() || null;
-  return {
-    ad: fm.ad.value.trim(), sektor: v("sektor"), nace_kodu: v("nace_kodu"), il_ilce: v("il_ilce"), kurulus_tarihi: v("kurulus_tarihi"), yetkili: v("yetkili"), telefon: v("telefon"), eposta: v("eposta"),
-    kaynak: v("kaynak"), ortak_id: v("ortak_id"), ihtiyac: v("ihtiyac"), program: v("program"), yatirim_tarihi: v("yatirim_tarihi"), butce: num(fm.butce.value),
-    q_plan: fm.q_plan.checked, q_tarih: fm.q_tarih.checked, q_finans: fm.q_finans.checked, q_karar: fm.q_karar.checked,
-    asama: fm.asama.value, sorumlu: v("sorumlu"), sonraki_adim: v("sonraki_adim"), sonraki_tarih: v("sonraki_tarih"),
-    teklif_tutari: num(fm.teklif_tutari.value), sozlesme_tutari: num(fm.sozlesme_tutari.value),
-    kayip_nedeni: fm.asama.value === "kayip" ? v("kayip_nedeni") : null, notlar: v("notlar"),
-  };
-}
-function hataGoster(m) { $("#ferr").innerHTML = `<div class="err">${esc(m)}</div>`; $("#firmaOv").scrollTop = 0; }
-
-async function firmaKaydet(ev, id) {
+async function isKaydet(ev, id, fid) {
   ev.preventDefault();
-  const veri = formOku(ev.target);
-  const hata = dogrula(veri);
-  if (hata) return hataGoster(hata);
+  const veri = isOku(ev.target);
+  const h = isDogrula(veri); if (h) return hataGoster(h);
   const btn = $("button.pri", ev.target); btn.disabled = true;
   try {
-    if (id) await firmaKaydetVeri(S.firmalar.find(x => x.id === id), veri);
+    if (id) { await isKaydetVeri(S.isler.find(x => x.id === id), veri); kapat(); }
     else {
-      veri.en_ileri = veri.asama === "kayip" ? 0 : sira(veri.asama);
-      const yeni = await db.insert("firmalar", veri);
-      await db.insert("aktiviteler", { firma_id: yeni.id, tur: "Aşama", yeni_asama: yeni.asama, aciklama: "Kayıt oluşturuldu → " + asama(yeni.asama).ad, kullanici: S.user.id });
-      await yukle();
+      const yi = await db.insert("isler", { ...veri, firma_id: fid, en_ileri: veri.asama === "kayip" ? 0 : sira(veri.asama) });
+      await db.insert("aktiviteler", { firma_id: fid, is_id: yi.id, tur: "Aşama", yeni_asama: yi.asama, aciklama: "Yeni iş açıldı → " + asama(yi.asama).ad, kullanici: S.user.id });
+      await yukle(); ciz(); firmaAc(fid);
     }
-    kapat(); ciz(); toast("Kaydedildi");
+    toast("Kaydedildi");
   } catch (e) { btn.disabled = false; hataGoster("Kaydedilemedi: " + e.message); }
 }
-async function firmaKaydetVeri(eski, patch) {
+async function isKaydetVeri(eski, patch) {
   const yeniAsama = patch.asama || eski.asama;
   if (yeniAsama !== eski.asama && yeniAsama !== "kayip") patch.en_ileri = Math.max(eski.en_ileri || 0, sira(yeniAsama));
   if (yeniAsama !== "kayip" && "asama" in patch) patch.kayip_nedeni = null;
   try {
-    await db.update("firmalar", eski.id, patch);
+    await db.update("isler", eski.id, patch);
     if (yeniAsama !== eski.asama) {
-      await db.insert("aktiviteler", { firma_id: eski.id, tur: "Aşama", yeni_asama: yeniAsama, aciklama: `${asama(eski.asama).ad} → ${asama(yeniAsama).ad}${yeniAsama === "kayip" && patch.kayip_nedeni ? " (" + patch.kayip_nedeni + ")" : ""}`, kullanici: S.user.id });
+      await db.insert("aktiviteler", { firma_id: eski.firma_id, is_id: eski.id, tur: "Aşama", yeni_asama: yeniAsama, aciklama: `${asama(eski.asama).ad} → ${asama(yeniAsama).ad}${yeniAsama === "kayip" && patch.kayip_nedeni ? " (" + patch.kayip_nedeni + ")" : ""}`, kullanici: S.user.id });
     }
     await yukle(); ciz();
   } catch (e) { toast("Kaydedilemedi: " + e.message); throw e; }
 }
-async function firmaSil(id) {
-  const f = S.firmalar.find(x => x.id === id);
-  if (!confirm(`"${f.ad}" ve tüm görüşme/tahsilat kayıtları silinsin mi? Bu işlem geri alınamaz.`)) return;
-  try { await db.remove("firmalar", id); await yukle(); kapat(); ciz(); toast("Silindi"); } catch (e) { toast("Silinemedi: " + e.message); }
+async function isSil(id) {
+  const i = S.isler.find(x => x.id === id);
+  if (!confirm(`Bu iş (${i.program || "programsız"}) ve görüşme/tahsilat kayıtları silinsin mi? Firma kaydı kalır.`)) return;
+  try { await db.remove("isler", id); await yukle(); ciz(); firmaAc(i.firma_id); toast("İş silindi"); } catch (e) { toast("Silinemedi: " + e.message); }
 }
-async function aktiviteEkle(id) {
+async function isAktiviteEkle(id) {
   const not = $("#akNot").value.trim();
-  if (!not) { hataGoster("Görüşme notunu yazın."); return; }
-  const fm = $("#firmaOv form");
-  const veri = formOku(fm);
-  const hata = dogrula(veri);
-  if (hata) return hataGoster(hata);
+  if (!not) return hataGoster("Görüşme notunu yazın.");
+  const veri = isOku($("#firmaOv form"));
+  const h = isDogrula(veri); if (h) return hataGoster(h);
   try {
-    const t = $("#akTarih").value || ymd();
-    const tarih = t === ymd() ? new Date().toISOString() : new Date(t + "T12:00:00").toISOString();
-    await db.insert("aktiviteler", { firma_id: id, tur: $("#akTur").value, aciklama: not, tarih, kullanici: S.user.id });
-    await firmaKaydetVeri(S.firmalar.find(x => x.id === id), veri);
-    firmaAc(id); toast("Görüşme eklendi");
+    const i = S.isler.find(x => x.id === id);
+    await db.insert("aktiviteler", { firma_id: i.firma_id, is_id: id, tur: $("#akTur").value, aciklama: not, tarih: akTarih(), kullanici: S.user.id });
+    await isKaydetVeri(i, veri);
+    isAc(id); toast("Görüşme eklendi");
   } catch (e) { hataGoster("Eklenemedi: " + e.message); }
 }
-async function aktiviteSil(aid, id) { if (!confirm("Bu kayıt silinsin mi?")) return; await db.remove("aktiviteler", aid); await yukle(); ciz(); firmaAc(id); }
+async function aktiviteSil(aid) {
+  if (!confirm("Bu kayıt silinsin mi?")) return;
+  const a = S.aktiviteler.find(x => x.id === aid); const isMod = $("#firmaOv form[onsubmit^=isKaydet]");
+  await db.remove("aktiviteler", aid); await yukle(); ciz();
+  if (isMod && a.is_id) isAc(a.is_id); else firmaAc(a.firma_id);
+}
 async function tahsilatEkle(id) {
   const tutar = num($("#thTutar").value);
-  if (!tutar) { hataGoster("Tahsilat tutarını girin."); return; }
+  if (!tutar) return hataGoster("Tahsilat tutarını girin.");
   try {
-    await db.insert("tahsilatlar", { firma_id: id, tarih: $("#thTarih").value || ymd(), tutar, aciklama: $("#thAc").value.trim() || null, kullanici: S.user.id });
-    await yukle(); ciz(); firmaAc(id); toast("Tahsilat eklendi");
+    const i = S.isler.find(x => x.id === id);
+    await db.insert("tahsilatlar", { firma_id: i.firma_id, is_id: id, tarih: $("#thTarih").value || ymd(), tutar, aciklama: $("#thAc").value.trim() || null, kullanici: S.user.id });
+    await yukle(); ciz(); isAc(id); toast("Tahsilat eklendi");
   } catch (e) { hataGoster("Eklenemedi: " + e.message); }
 }
-async function tahsilatSil(tid, id) { if (!confirm("Bu tahsilat silinsin mi?")) return; await db.remove("tahsilatlar", tid); await yukle(); ciz(); firmaAc(id); }
+async function tahsilatSil(tid) {
+  if (!confirm("Bu tahsilat silinsin mi?")) return;
+  const t = S.tahsilatlar.find(x => x.id === tid);
+  await db.remove("tahsilatlar", tid); await yukle(); ciz(); isAc(t.is_id);
+}
 
 /* ---------- ÇÖZÜM ORTAKLARI ---------- */
 function ortakListe() {
   const satir = S.ortaklar.map(o => {
     const fs = S.firmalar.filter(f => f.ortak_id === o.id);
-    const soz = fs.filter(f => f.en_ileri >= sira("sozlesme")).length;
-    const tah = fs.reduce((s, f) => s + toplamTahsil(f.id), 0);
+    const soz = fs.filter(f => firmaIsleri(f.id).some(i => i.en_ileri >= sira("sozlesme"))).length;
+    const tah = fs.reduce((s, f) => s + tahsilFirma(f.id), 0);
     return { o, n: fs.length, soz, tah };
   }).sort((a, b) => b.n - a.n);
   $("#main").innerHTML = `
   <div class="toolbar"><h2 style="margin:0;margin-right:auto">Çözüm ortakları</h2><button class="btn pri" onclick="ortakAc()">+ Yeni çözüm ortağı</button></div>
-  <p style="color:var(--muted);margin:-6px 0 12px;font-size:13px">Müşterinin yatırım kararını sizden önce gören kişiler: makine satıcıları, mali müşavirler, fuar organizatörleri. Hangi ilişkinin gerçekten iş getirdiğini buradan izleyin.</p>
+  <p class="aciklama">Müşterinin yatırım kararını sizden önce gören kişiler: makine satıcıları, mali müşavirler, fuar organizatörleri. Hangi ilişkinin gerçekten iş getirdiğini buradan izleyin.</p>
   <div class="tbl-wrap"><table><thead><tr><th>Ad</th><th>Tür</th><th>Yetkili</th><th>Telefon</th><th class="num">Getirdiği firma</th><th class="num">Sözleşmeye dönen</th><th class="num">Tahsilat</th></tr></thead>
-  <tbody>${satir.map(({ o, n, soz, tah }) => `<tr onclick="ortakAc('${o.id}')"><td><b>${esc(o.ad)}</b></td><td>${esc(o.tur || "")}</td><td>${esc(o.yetkili || "")}</td><td>${esc(o.telefon || "")}</td><td class="num">${n}</td><td class="num">${soz}</td><td class="num">${tl(tah)}</td></tr>`).join("") || `<tr><td colspan="7" class="empty">Henüz çözüm ortağı yok.</td></tr>`}</tbody></table></div>`;
+  <tbody>${satir.map(({ o, n, soz, tah }) => `<tr onclick="ortakAc('${o.id}')"><td><b>${esc(o.ad)}</b></td><td>${esc(o.tur || "")}</td><td>${esc(o.yetkili || "")}</td><td>${esc(o.telefon || "")}</td><td class="num">${n}</td><td class="num">${soz}</td><td class="num">${tl0(tah)}</td></tr>`).join("") || `<tr><td colspan="7" class="empty">Henüz çözüm ortağı yok.</td></tr>`}</tbody></table></div>`;
 }
 function ortakAc(id) {
   const o = id ? S.ortaklar.find(x => x.id === id) : {};
-  const ov = document.createElement("div");
-  ov.className = "ov"; ov.id = "kucukOv";
-  ov.onmousedown = e => { if (e.target === ov) kapat(); };
-  ov.innerHTML = `<form class="modal sm" onsubmit="ortakKaydet(event,'${id || ""}')">
+  const ov = modalAc(`<form class="modal sm" onsubmit="ortakKaydet(event,'${id || ""}')">
     <div class="mh"><h2>${id ? esc(o.ad) : "Yeni çözüm ortağı"}</h2><button type="button" class="x" onclick="kapat()">×</button></div>
     <div class="mb"><div id="ferr"></div>
       <label class="f req">Ad<input name="ad" value="${esc(o.ad)}" required></label>
@@ -716,98 +913,89 @@ function ortakAc(id) {
       <label class="f">Notlar (işbirliği şekli, ne zaman görüşüldü)<textarea name="notlar">${esc(o.notlar)}</textarea></label>
     </div>
     <div class="mf">${id ? `<button type="button" class="btn danger left" onclick="ortakSil('${id}')">Sil</button>` : ""}<button type="button" class="btn" onclick="kapat()">Vazgeç</button><button class="btn pri">Kaydet</button></div>
-  </form>`;
-  kapat(); document.body.appendChild(ov); yildiz(ov); $("input", ov).focus();
+  </form>`, "kucukOv");
+  $("input", ov).focus();
 }
 async function ortakKaydet(ev, id) {
   ev.preventDefault();
   const fm = ev.target, v = n => fm[n].value.trim() || null;
   const veri = { ad: fm.ad.value.trim(), tur: v("tur"), yetkili: v("yetkili"), telefon: v("telefon"), eposta: v("eposta"), notlar: v("notlar") };
   try { if (id) await db.update("cozum_ortaklari", id, veri); else await db.insert("cozum_ortaklari", veri); await yukle(); kapat(); ciz(); toast("Kaydedildi"); }
-  catch (e) { $("#ferr").innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+  catch (e) { hataGoster(e.message); }
 }
 async function ortakSil(id) {
   if (!confirm("Çözüm ortağı silinsin mi? Bağlı firmalardaki ortak bilgisi boşalır.")) return;
-  try {
-    await db.remove("cozum_ortaklari", id);
-    if (DEMO) for (const f of S.firmalar.filter(f => f.ortak_id === id)) await db.update("firmalar", f.id, { ortak_id: null });
-    await yukle(); kapat(); ciz();
-  } catch (e) { toast(e.message); }
+  try { await db.remove("cozum_ortaklari", id); await yukle(); kapat(); ciz(); } catch (e) { toast(e.message); }
 }
 
 /* ---------- RAPOR ---------- */
 function rapor() {
   const bas_ = addDays(-S.donem), basIso = bas_.toISOString(), basYmd = ymd(bas_);
-  const L = {}; const reg = (baslik, ids) => { const k = "l" + Object.keys(L).length; L[k] = { baslik, ids: [...new Set(ids)] }; return k; };
-  const tik = (baslik, ids) => `class="tik" onclick="raporListe('${reg(baslik, ids)}')"`;
+  const L = {}; const reg = (baslik, ids, tip = "is") => { const k = "l" + Object.keys(L).length; L[k] = { baslik, tip, ids: [...new Set(ids)] }; return k; };
+  const tik = (baslik, ids, tip) => `class="tik" onclick="raporListe('${reg(baslik, ids, tip)}')"`;
   const ak = S.aktiviteler.filter(a => a.tarih >= basIso);
-  const asamaIds = k => ak.filter(a => a.tur === "Aşama" && a.yeni_asama === k).map(a => a.firma_id);
-  const yeni = S.firmalar.filter(f => f.created_at >= basIso);
+  const asamaIds = k => ak.filter(a => a.tur === "Aşama" && a.yeni_asama === k && a.is_id).map(a => a.is_id);
+  const yeni = S.isler.filter(i => i.created_at >= basIso);
   const gorAk = ak.filter(a => GORUSME_TURLERI.includes(a.tur));
   const teklifI = asamaIds("teklif"), sozI = asamaIds("sozlesme"), kayipI = asamaIds("kayip");
   const say = ids => new Set(ids).size;
   const tahR = S.tahsilatlar.filter(t => t.tarih >= basYmd);
   const tah = tahR.reduce((s, t) => s + Number(t.tutar || 0), 0);
-  const sozTutar = S.firmalar.filter(f => sozI.includes(f.id)).reduce((s, f) => s + Number(f.sozlesme_tutari || 0), 0);
+  const sozTutar = S.isler.filter(i => sozI.includes(i.id)).reduce((s, i) => s + Number(i.sozlesme_tutari || 0), 0);
+  const mevcutYeni = yeni.filter(i => i.kaynak === MEVCUT);
   const donemAd = { 30: "son 30 gün", 90: "son 3 ay", 180: "son 6 ay", 365: "son 12 ay" }[S.donem] || "";
-  const kpi = (l, v, ids, baslik, ek = "", cls = "") => `<div class="card kpi tik ${cls}" onclick="raporListe('${reg(baslik + " (" + donemAd + ")", ids)}')"><div class="l">${l}</div><div class="v">${v}</div>${ek}</div>`;
+  const kpi = (l, v, ids, baslik, ek = "", cls = "", tip = "is") => `<div class="card kpi tik ${cls}" onclick="raporListe('${reg(baslik + " (" + donemAd + ")", ids, tip)}')"><div class="l">${l}</div><div class="v">${v}</div>${ek}</div>`;
 
-  // kaynağa göre (dönemde oluşturulan firmalar)
   const kay = {};
-  yeni.forEach(f => { const k = f.kaynak || "Belirtilmemiş"; kay[k] = kay[k] || { n: [], tek: [], soz: [] }; kay[k].n.push(f.id); if (f.en_ileri >= sira("teklif")) kay[k].tek.push(f.id); if (f.en_ileri >= sira("sozlesme")) kay[k].soz.push(f.id); });
+  yeni.forEach(i => { const k = isKaynak(i); kay[k] = kay[k] || { n: [], tek: [], soz: [] }; kay[k].n.push(i.id); if (i.en_ileri >= sira("teklif")) kay[k].tek.push(i.id); if (i.en_ileri >= sira("sozlesme")) kay[k].soz.push(i.id); });
   const kayR = Object.entries(kay).sort((a, b) => b[1].n.length - a[1].n.length);
-  // kayıp nedenleri
   const kn = {};
-  S.firmalar.filter(f => f.asama === "kayip" && (f.updated_at || "") >= basIso).forEach(f => { const k = f.kayip_nedeni || "Belirtilmemiş"; (kn[k] = kn[k] || []).push(f.id); });
+  S.isler.filter(i => i.asama === "kayip" && (i.updated_at || "") >= basIso).forEach(i => { const k = i.kayip_nedeni || "Belirtilmemiş"; (kn[k] = kn[k] || []).push(i.id); });
   const knR = Object.entries(kn).sort((a, b) => b[1].length - a[1].length); const knMax = Math.max(1, ...knR.map(x => x[1].length));
-  // açık huni
-  const acikF = S.firmalar.filter(acik);
-  const huniR = ASAMALAR.filter(a => !a.kapali).map(a => { const fs = acikF.filter(f => f.asama === a.k); return { a, fs, t: fs.reduce((s, f) => s + Number(f.sozlesme_tutari || f.teklif_tutari || 0), 0) }; });
-  const huniMax = Math.max(1, ...huniR.map(x => x.fs.length));
+  const acikI = S.isler.filter(acik);
+  const huniR = ASAMALAR.filter(a => !a.kapali).map(a => { const is_ = acikI.filter(i => i.asama === a.k); return { a, is_, t: is_.reduce((s, i) => s + Number(i.sozlesme_tutari || i.teklif_tutari || 0), 0) }; });
+  const huniMax = Math.max(1, ...huniR.map(x => x.is_.length));
   const oran = (a, b) => b ? Math.round(a / b * 100) + "%" : "—";
   const hucre = (ids, baslik) => `<td class="num"><span ${ids.length ? tik(baslik, ids) : ""} style="display:inline-block;padding:2px 8px">${ids.length}</span></td>`;
 
   $("#main").innerHTML = `
   <div class="toolbar"><h2 style="margin:0;margin-right:auto">Rapor</h2>
     <select onchange="S.donem=+this.value;ciz()">${[[30, "Son 30 gün"], [90, "Son 3 ay"], [180, "Son 6 ay"], [365, "Son 12 ay"]].map(([v, t]) => `<option value="${v}" ${S.donem === v ? "selected" : ""}>${t}</option>`).join("")}</select></div>
-  <p style="color:var(--muted);margin:-6px 0 12px;font-size:13px">Rakamlara ve satırlara tıklayarak ilgili firmaları listeleyebilirsiniz.</p>
+  <p class="aciklama">Rakamlara ve satırlara tıklayarak ilgili işleri listeleyebilirsiniz.</p>
   <div class="grid g4" style="margin-bottom:16px">
-    ${kpi("Yeni aday", yeni.length, yeni.map(f => f.id), "Yeni adaylar")}
-    ${kpi("Görüşme (ziyaret / toplantı / sunum)", gorAk.length, gorAk.map(a => a.firma_id), "Görüşme yapılan firmalar")}
-    ${kpi("Teklif verilen firma", say(teklifI), teklifI, "Teklif verilen firmalar")}
-    ${kpi("Sözleşme", say(sozI), sozI, "Sözleşme imzalanan firmalar", `<div class="l">${tl(sozTutar)}</div>`)}
-    ${kpi("Tahsilat", tl(tah) || "0 ₺", tahR.map(t => t.firma_id), "Tahsilat yapılan firmalar", "", "green")}
-    ${kpi("Kaybedilen", say(kayipI), kayipI, "Kaybedilen firmalar", "", say(kayipI) ? "red" : "")}
+    ${kpi("Yeni iş", yeni.length, yeni.map(i => i.id), "Yeni açılan işler", mevcutYeni.length ? `<div class="l">${mevcutYeni.length} tanesi mevcut müşteriden</div>` : "")}
+    ${kpi("Görüşme (ziyaret / toplantı / sunum)", gorAk.length, gorAk.map(a => a.firma_id), "Görüşme yapılan firmalar", "", "", "firma")}
+    ${kpi("Teklif verilen iş", say(teklifI), teklifI, "Teklif verilen işler")}
+    ${kpi("Sözleşme", say(sozI), sozI, "Sözleşme imzalanan işler", `<div class="l">${tl(sozTutar)}</div>`)}
+    ${kpi("Tahsilat", tl(tah) || "0 ₺", tahR.map(t => t.is_id).filter(Boolean), "Tahsilat yapılan işler", "", "green")}
+    ${kpi("Kaybedilen", say(kayipI), kayipI, "Kaybedilen işler", "", say(kayipI) ? "red" : "")}
   </div>
   <div class="grid g2">
     <div class="card"><h3>Açık huni (şu an)</h3>
-      ${huniR.map(x => `<div ${tik("Açık huni: " + x.a.ad, x.fs.map(f => f.id))} style="padding:4px 6px;margin:0 -6px 5px"><div class="row" style="justify-content:space-between;font-size:13px"><span>${x.a.ad}</span><span><b>${x.fs.length}</b> <span style="color:var(--muted)">${x.t ? "· " + tl(x.t) : ""}</span></span></div><div class="bar"><i style="width:${x.fs.length / huniMax * 100}%"></i></div></div>`).join("")}
+      ${huniR.map(x => `<div ${tik("Açık huni: " + x.a.ad, x.is_.map(i => i.id))} style="padding:4px 6px;margin:0 -6px 5px"><div class="row" style="justify-content:space-between;font-size:13px"><span>${x.a.ad}</span><span><b>${x.is_.length}</b> <span style="color:var(--muted)">${x.t ? "· " + tl(x.t) : ""}</span></span></div><div class="bar"><i style="width:${x.is_.length / huniMax * 100}%"></i></div></div>`).join("")}
     </div>
     <div class="card"><h3>Kayıp nedenleri</h3>
       ${knR.map(([k, ids]) => `<div ${tik("Kayıp nedeni: " + k, ids)} style="padding:4px 6px;margin:0 -6px 5px"><div class="row" style="justify-content:space-between;font-size:13px"><span>${esc(k)}</span><b>${ids.length}</b></div><div class="bar"><i style="width:${ids.length / knMax * 100}%;background:var(--red)"></i></div></div>`).join("") || `<div class="empty">Bu dönemde kayıp yok.</div>`}
     </div>
-    <div class="card"><h3>Kaynağa göre dönüşüm (dönemde eklenen adaylar)</h3>
-      <div class="tscroll"><table><thead><tr><th>Kaynak</th><th class="num">Aday</th><th class="num">Teklife ulaşan</th><th class="num">Sözleşmeye ulaşan</th><th class="num">Oran</th></tr></thead>
+    <div class="card"><h3>Kaynağa göre dönüşüm (dönemde açılan işler)</h3>
+      <div class="tscroll"><table><thead><tr><th>Kaynak</th><th class="num">İş</th><th class="num">Teklife ulaşan</th><th class="num">Sözleşmeye ulaşan</th><th class="num">Oran</th></tr></thead>
       <tbody>${kayR.map(([k, x]) => `<tr ${tik("Kaynak: " + k, x.n)}><td>${esc(k)}</td>${hucre(x.n, "Kaynak: " + k)}${hucre(x.tek, "Kaynak: " + k + " · teklife ulaşan")}${hucre(x.soz, "Kaynak: " + k + " · sözleşmeye ulaşan")}<td class="num">${oran(x.soz.length, x.n.length)}</td></tr>`).join("") || `<tr><td colspan="5" class="empty">Veri yok.</td></tr>`}</tbody></table></div>
     </div>
   </div>
-  <p style="color:var(--muted);font-size:12px;margin-top:14px">Teklif / sözleşme / kayıp sayıları, dönem içinde o aşamaya geçirilen firma sayısıdır. Doğru rapor için aşamaların zamanında güncellenmesi gerekir.</p>`;
+  <p class="aciklama" style="margin-top:14px;font-size:12px">Teklif / sözleşme / kayıp sayıları, dönem içinde o aşamaya geçirilen iş sayısıdır. "Mevcut müşteri" kaynağı, daha önce iş yapılmış firmalardan açılan yeni işleri gösterir.</p>`;
   S.rl = L;
 }
-
-/* rapordan firma listesi */
-function raporListe(k) { event && event.stopPropagation(); const l = S.rl && S.rl[k]; if (!l) return; S.liste = l; listeCiz(); }
+function raporListe(k) { if (window.event) window.event.stopPropagation(); const l = S.rl && S.rl[k]; if (!l) return; S.liste = l; listeCiz(); }
 function listeCiz() {
   const l = S.liste; if (!l) return;
-  const fs = l.ids.map(id => S.firmalar.find(f => f.id === id)).filter(Boolean);
+  const firma = l.tip === "firma";
+  const list = l.ids.map(id => (firma ? S.firmalar : S.isler).find(x => x.id === id)).filter(Boolean);
   let ov = $("#listeOv");
   if (!ov) { ov = document.createElement("div"); ov.className = "ov"; ov.id = "listeOv"; ov.onmousedown = e => { if (e.target === ov) listeKapat(); }; document.body.appendChild(ov); }
   ov.innerHTML = `<div class="modal" style="max-width:1200px">
-    <div class="mh"><h2>${esc(l.baslik)} <span style="color:var(--muted);font-weight:500">(${fs.length})</span></h2><button type="button" class="x" onclick="listeKapat()">×</button></div>
-    <div class="mb"><div class="tbl-wrap"><table><thead><tr>
-      <th>Firma</th><th>Sektör</th><th>Kuruluş</th><th>Aşama</th><th>Sorumlu</th><th>Sonraki adım / kayıp nedeni</th><th>Tarih</th><th>Puan</th><th class="num">Teklif</th><th class="num">Tahsil</th>
-    </tr></thead><tbody>${tabloSatirlari(fs)}</tbody></table></div>
-    <p style="color:var(--muted);font-size:12px;margin:10px 0 0">Firmaya tıklayarak kaydını açabilirsiniz. Kapatınca bu listeye dönersiniz.</p></div>
+    <div class="mh"><h2>${esc(l.baslik)} <span style="color:var(--muted);font-weight:500">(${list.length})</span></h2><button type="button" class="x" onclick="listeKapat()">×</button></div>
+    <div class="mb"><div class="tbl-wrap"><table><thead><tr>${firma ? FIRMA_BASLIK : IS_BASLIK}</tr></thead><tbody>${firma ? firmaTabloSatirlari(list) : isTabloSatirlari(list)}</tbody></table></div>
+    <p class="aciklama" style="margin:10px 0 0;font-size:12px">Satıra tıklayarak kaydı açabilirsiniz. Kapatınca bu listeye dönersiniz.</p></div>
   </div>`;
 }
 function listeKapat() { S.liste = null; const o = $("#listeOv"); if (o) o.remove(); }
@@ -815,19 +1003,15 @@ function listeKapat() { S.liste = null; const o = $("#listeOv"); if (o) o.remove
 /* ---------- HESAP ---------- */
 function hesapAc() {
   const me = S.members.find(m => m.user_id === S.user.id) || {};
-  const ov = document.createElement("div");
-  ov.className = "ov"; ov.id = "kucukOv";
-  ov.onmousedown = e => { if (e.target === ov) kapat(); };
-  ov.innerHTML = `<form class="modal sm" onsubmit="hesapKaydet(event)">
+  modalAc(`<form class="modal sm" onsubmit="hesapKaydet(event)">
     <div class="mh"><h2>Hesabım</h2><button type="button" class="x" onclick="kapat()">×</button></div>
     <div class="mb"><div id="ferr"></div>
       <label class="f">Görünen ad<input name="ad" value="${esc(me.ad)}" required></label>
       <label class="f">Yeni şifre (değiştirmeyecekseniz boş bırakın)<input name="p" type="password" minlength="8" autocomplete="new-password"></label>
-      <div style="font-size:12px;color:var(--muted)">${esc(S.user.email || "")}</div>
+      <div class="sub">${esc(S.user.email || "")}</div>
     </div>
     <div class="mf"><button type="button" class="btn left" onclick="cikis()">Çıkış yap</button><button type="button" class="btn" onclick="kapat()">Vazgeç</button><button class="btn pri">Kaydet</button></div>
-  </form>`;
-  kapat(); document.body.appendChild(ov);
+  </form>`, "kucukOv");
 }
 async function hesapKaydet(ev) {
   ev.preventDefault();
@@ -836,10 +1020,10 @@ async function hesapKaydet(ev) {
     await db.update("team_members", S.user.id, { ad: fm.ad.value.trim() }, "user_id");
     if (fm.p.value) await db.setPassword(fm.p.value);
     await yukle(); kapat(); ciz(); toast("Kaydedildi");
-  } catch (e) { $("#ferr").innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+  } catch (e) { hataGoster(e.message); }
 }
 
-/* sekmeye dönünce verileri tazele (diğer kullanıcıların değişiklikleri) */
+/* diğer kullanıcıların değişiklikleri: sekmeye dönünce / 2 dakikada bir */
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && S.user && !$(".ov")) yenile(true); });
 setInterval(() => { if (S.user && document.visibilityState === "visible" && !$(".ov")) yenile(true); }, 120000);
 
