@@ -452,7 +452,7 @@ function filtreliFirmalar() {
     (!S.fAsama || (S.fAsama === "_acik" ? acik(f) : f.asama === S.fAsama)) &&
     (!S.fSorumlu || f.sorumlu === S.fSorumlu) &&
     (!S.fKaynak || f.kaynak === S.fKaynak) &&
-    (!q || [f.ad, f.sektor, f.il_ilce, f.yetkili, f.ihtiyac, f.program, f.notlar].join(" ").toLocaleLowerCase("tr").includes(q))
+    (!q || [f.ad, f.sektor, f.nace_kodu, f.il_ilce, f.yetkili, f.ihtiyac, f.program, f.notlar].join(" ").toLocaleLowerCase("tr").includes(q))
   ).sort((a, b) => sira(a.asama) - sira(b.asama) || (a.sonraki_tarih || "9").localeCompare(b.sonraki_tarih || "9"));
 }
 function firmaListe() {
@@ -460,7 +460,7 @@ function firmaListe() {
   $("#main").innerHTML = `
   <div class="toolbar">
     <h2 style="margin:0;margin-right:auto">Firmalar <span style="color:var(--muted);font-weight:500">(${fs.length})</span></h2>
-    <input type="search" placeholder="Ara: firma, sektör, ihtiyaç..." value="${esc(S.ara)}" oninput="S.ara=this.value;tabloGuncelle()">
+    <input type="search" placeholder="Ara: firma, sektör, NACE, ihtiyaç..." value="${esc(S.ara)}" oninput="S.ara=this.value;tabloGuncelle()">
     <select onchange="S.fAsama=this.value;ciz()"><option value="">Tüm aşamalar</option><option value="_acik" ${S.fAsama === "_acik" ? "selected" : ""}>Sadece açık</option>${ASAMALAR.map(a => `<option value="${a.k}" ${S.fAsama === a.k ? "selected" : ""}>${a.ad}</option>`).join("")}</select>
     <select onchange="S.fSorumlu=this.value;ciz()"><option value="">Tüm sorumlular</option>${S.members.map(m => `<option value="${m.user_id}" ${S.fSorumlu === m.user_id ? "selected" : ""}>${esc(m.ad)}</option>`).join("")}</select>
     <select onchange="S.fKaynak=this.value;ciz()"><option value="">Tüm kaynaklar</option>${KAYNAKLAR.map(k => `<option ${S.fKaynak === k ? "selected" : ""}>${k}</option>`).join("")}</select>
@@ -473,7 +473,7 @@ function firmaListe() {
 function tabloSatirlari(fs) {
   return fs.map(f => `<tr onclick="firmaAc('${f.id}')">
     <td><b>${esc(f.ad)}</b><div style="color:var(--muted);font-size:12px">${esc(f.il_ilce || "")}</div></td>
-    <td>${esc(f.sektor || "")}</td>
+    <td>${esc(f.sektor || "")}${f.nace_kodu ? `<div style="color:var(--muted);font-size:12px">NACE ${esc(f.nace_kodu)}</div>` : ""}</td>
     <td>${kurulusHucre(f)}</td>
     <td><span class="tag ${f.asama === "kayip" ? "red" : f.asama === "tamam" ? "green" : "blue"}">${esc(asama(f.asama).ad)}</span></td>
     <td>${esc(uyeAd(f.sorumlu))}</td>
@@ -490,7 +490,7 @@ const kurulusHucre = f => f.kurulus_tarihi ? `${String(f.kurulus_tarihi).slice(0
 const puanTag = f => { const p = puan(f); return `<span class="tag ${p >= 3 ? "green" : p === 2 ? "amber" : ""}">${p}/4</span>`; };
 
 function excelAktar() {
-  const sutun = [["Firma", f => f.ad], ["Sektör", f => f.sektor], ["İl/İlçe", f => f.il_ilce], ["Kuruluş tarihi", f => fd(f.kurulus_tarihi)], ["Firma yaşı", f => yas(f)], ["Yetkili", f => f.yetkili], ["Telefon", f => f.telefon], ["E-posta", f => f.eposta],
+  const sutun = [["Firma", f => f.ad], ["Sektör", f => f.sektor], ["NACE kodu", f => f.nace_kodu], ["İl/İlçe", f => f.il_ilce], ["Kuruluş tarihi", f => fd(f.kurulus_tarihi)], ["Firma yaşı", f => yas(f)], ["Yetkili", f => f.yetkili], ["Telefon", f => f.telefon], ["E-posta", f => f.eposta],
     ["Kaynak", f => f.kaynak], ["Çözüm ortağı", f => (S.ortaklar.find(o => o.id === f.ortak_id) || {}).ad], ["İhtiyaç", f => f.ihtiyac], ["Program", f => f.program],
     ["Yatırım tarihi", f => fd(f.yatirim_tarihi)], ["Bütçe", f => f.butce], ["Puan (4)", f => puan(f)], ["Aşama", f => asama(f.asama).ad], ["Sorumlu", f => uyeAd(f.sorumlu)],
     ["Sonraki adım", f => f.sonraki_adim], ["Adım tarihi", f => fd(f.sonraki_tarih)], ["Teklif", f => f.teklif_tutari], ["Sözleşme", f => f.sozlesme_tutari],
@@ -545,6 +545,7 @@ function firmaAc(id, onAyar = {}, hata = "") {
       <div class="fg">
         <label class="f req">Firma adı<input name="ad" value="${esc(f.ad)}"></label>
         <label class="f">Sektör<input name="sektor" value="${esc(f.sektor)}"></label>
+        <label class="f">NACE kodu<input name="nace_kodu" value="${esc(f.nace_kodu)}" placeholder="ör. 25.62.01"></label>
         <label class="f">İl / ilçe / OSB<input name="il_ilce" value="${esc(f.il_ilce)}"></label>
         <label class="f">Kuruluş tarihi<input name="kurulus_tarihi" type="date" value="${esc(f.kurulus_tarihi || "")}"></label>
         <label class="f">Karar verici / yetkili<input name="yetkili" value="${esc(f.yetkili)}"></label>
@@ -615,7 +616,7 @@ document.addEventListener("keydown", e => { if (e.key !== "Escape") return; if (
 function formOku(fm) {
   const v = n => fm[n].value.trim() || null;
   return {
-    ad: fm.ad.value.trim(), sektor: v("sektor"), il_ilce: v("il_ilce"), kurulus_tarihi: v("kurulus_tarihi"), yetkili: v("yetkili"), telefon: v("telefon"), eposta: v("eposta"),
+    ad: fm.ad.value.trim(), sektor: v("sektor"), nace_kodu: v("nace_kodu"), il_ilce: v("il_ilce"), kurulus_tarihi: v("kurulus_tarihi"), yetkili: v("yetkili"), telefon: v("telefon"), eposta: v("eposta"),
     kaynak: v("kaynak"), ortak_id: v("ortak_id"), ihtiyac: v("ihtiyac"), program: v("program"), yatirim_tarihi: v("yatirim_tarihi"), butce: num(fm.butce.value),
     q_plan: fm.q_plan.checked, q_tarih: fm.q_tarih.checked, q_finans: fm.q_finans.checked, q_karar: fm.q_karar.checked,
     asama: fm.asama.value, sorumlu: v("sorumlu"), sonraki_adim: v("sonraki_adim"), sonraki_tarih: v("sonraki_tarih"),
